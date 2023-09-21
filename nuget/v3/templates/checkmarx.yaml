@@ -1,0 +1,21 @@
+parameters:
+  cxPreset: ''
+  projectName: ''
+  highThreshold: ''
+  mediumThreshold: ''
+  lowThreshold: ''
+
+steps:
+- task: Application security testing@2022
+  inputs:
+    projectName: '$(projectName)'
+    enableProxy: false
+    enableSastScan: true
+    CheckmarxService: 'CheckMarx-9.2-cxado'
+    customPreset: '$(cxPreset)'
+    fullTeamName: 'CxServer\US\$(projectName)'
+    enableDependencyScan: false
+    vulnerabilityThreshold: true
+    high: '$(highThreshold)'
+    medium: '$(mediumThreshold)'
+    low: '$(lowThreshold)'

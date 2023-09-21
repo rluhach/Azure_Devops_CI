@@ -1,0 +1,38 @@
+parameters:
+  - name: packageOutputPath
+    default: ''
+
+steps: 
+  - task: ArchiveFiles@2
+    displayName: Create Deployment Config Archive
+    inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/DeploymentConfig'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(packageOutputPath)/deployment_config_$(build.buildnumber).zip'
+        replaceExistingArchive: true
+
+  - task: ArchiveFiles@2
+    displayName: Create DAG's Archive
+    inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/DAGs'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(packageOutputPath)/dags_$(build.buildnumber).zip'
+        replaceExistingArchive: true
+
+  - task: PowerShell@2
+    displayName: Combine Confgurations and DAGs
+    inputs:
+        targetType: 'inline'
+        script: |
+            #Combine configuration and dag zip files into a single package
+            $deploymentConfigArchive = '$(packageOutputPath)/deployment_config_$(build.buildnumber).zip'
+            $dagsArchive = '$(packageOutputPath)/dags_$(build.buildnumber).zip'
+            $outputZip = '$(packageOutputPath)/airflow_package_$(build.buildnumber).zip'
+            $zipFiles = @($deploymentConfigArchive, $dagsArchive)
+            Compress-Archive -Path $zipFiles -DestinationPath $outputZip
+            Remove-Item -Path $deploymentConfigArchive
+            Remove-Item -Path $dagsArchive
+            Get-ChildItem -Path $(packageOutputPath)
+            Write-Output $outputZip

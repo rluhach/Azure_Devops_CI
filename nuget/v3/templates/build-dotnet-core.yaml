@@ -1,0 +1,50 @@
+parameters:
+  - name: solution
+    default: ''
+  - name: BuildConfiguration
+    default: ''
+
+steps:
+- template: dotnet-framework-install.yaml
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet build'
+  inputs:
+    command: 'build'
+    projects: '$(solution)'
+    arguments: '--configuration $(buildConfiguration) --no-restore'
+
+- task: DotNetCoreCLI@2 
+  displayName: 'nuget pack'
+  inputs:
+    command: 'pack'
+    packagesToPack: '$(solution)'
+    nobuild: true
+    versioningScheme: 'byBuildNumber'
+    packDestination: $(System.DefaultWorkingDirectory)/packages
+
+- task: DotNetCoreCLI@2
+  displayName: 'Nuget restore for test projects'
+  inputs:
+    command: 'restore'
+    projects: '**/*Test*/*.csproj' 
+    feedsToUse: 'config'
+    nugetConfigPath: 'user-service-repo/Nuget.config'
+    externalFeedCredentials: 'ArtifactoryNugetConnection'
+    #externalFeedCredentials: 'Artifactory-NuGet-Deployer'
+    noCache: true
+
+- task: DotNetCoreCLI@2
+  displayName: 'dotnet test'
+  inputs:
+    command: test
+    projects: |
+     **/*Test*/*.csproj 
+     !**/*.Api.Test.csproj
+    arguments: '--configuration $(buildConfiguration) --no-restore'
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Artifact: nuget'
+  inputs:
+    targetPath: $(Build.ArtifactStagingDirectory)/packages
+    ArtifactName: 'packages'

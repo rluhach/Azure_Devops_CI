@@ -1,0 +1,24 @@
+parameters:
+- name: airflowConfigFilesPath
+  default: ''
+
+- name: airflowDagFilesPath
+  default: ''
+
+steps: 
+  - task: CopyFiles@2
+    displayName: Copy deployment configurations
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)/user-service-repo/$(airflowConfigFilesPath)'
+      Contents: '**'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)/DeploymentConfig'
+      overwrite: true
+
+  - task: CopyFiles@2
+    displayName: Copy DAGs
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)/user-service-repo/$(airflowDagFilesPath)'
+      Contents: '**'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)/DAGs'
+      overwrite: true
+

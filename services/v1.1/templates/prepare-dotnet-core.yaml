@@ -1,0 +1,36 @@
+steps:
+- task: UseDotNet@2
+  displayName: 'Use .NET Core sdk'
+  inputs:
+    packageType: sdk
+    version: 5.x
+
+- task: NuGetToolInstaller@1 # Optional if nuget.exe >= 4.8.5385 is already on the path
+  inputs:
+    versionSpec: '*'
+    checkLatest: true
+
+#- script: dotnet nuget locals all --clear
+
+#- script: dotnet nuget locals global-packages -c
+
+#- script: dotnet nuget locals temp -c
+
+- task: ArtifactoryNuGet@2
+  displayName: 'nuget restore'
+  inputs:
+      command: 'restore'
+      artifactoryService: 'Artifactory_GPS_BasicAuth'
+      targetResolveRepo: 'nuget'
+      solutionPath: '**/*.sln'
+      noNuGetCache: true
+      collectBuildInfo: true
+      buildName: '$(Build.DefinitionName)'
+      buildNumber: '$(Build.BuildNumber)'
+      includeEnvVars: true
+
+- task: NuGetAuthenticate@0
+  inputs:
+    nuGetServiceConnections: 'ArtifactoryNugetConnection'
+- task: UseDotNet@2
+- script: dotnet restore $(System.DefaultWorkingDirectory)\user-service-repo\ --configfile user-service-repo/Nuget.config --runtime rhel-x64

@@ -1,0 +1,123 @@
+parameters:
+- name: ArtifactName
+  type: string
+
+- name: ArtifactoryPath
+  type: string
+  
+- name: repoName
+  default: ''
+  
+- name: deployOnDevEC2
+  default: ''
+
+- name: devBuildCommand
+  default: ''
+
+- name: deployOnIntEC2
+  default: ''
+
+- name: intBuildCommand
+  default: ''
+
+- name: deployOnPrdEC2
+  default: ''
+
+- name: prdBuildCommand
+  default: ''
+
+- name: deployOnDevOpsEC2
+  default: ''
+
+- name: devOpsBuildCommand
+  default: ''
+ 
+- name: SharedInfra
+  default: false
+
+- name: buildProjectPath
+  default: ''
+  
+steps:
+- task: PowerShell@2
+  displayName: 'Show parameter values' 
+  inputs:
+    targetType: 'inline' 
+    script: |
+      Write-Host "deployOnDevEC2: ${{ parameters.deployOnDevEC2 }}"
+      Write-Host "devBuildCommand: ${{ parameters.devBuildCommand }}"
+      Write-Host "deployOnIntEC2: ${{ parameters.deployOnIntEC2 }}"
+      Write-Host "intBuildCommand: ${{ parameters.intBuildCommand }}"
+      Write-Host "deployOnPrdEC2: ${{ parameters.deployOnPrdEC2 }}"
+      Write-Host "prdBuildCommand: ${{ parameters.prdBuildCommand }}"
+      Write-Host "deployOnDevOpsEC2: ${{ parameters.deployOnDevOpsEC2 }}"
+      Write-Host "devOpsBuildCommand: ${{ parameters.devOpsBuildCommand }}"
+      Write-Host "ArtifactoryPath: ${{ parameters.ArtifactoryPath }}"
+      Write-Host "ArtifactName: ${{ parameters.ArtifactName }}" 
+      Write-Host "repoName: ${{ parameters.repoName }}" 
+      Write-Host "SharedInfra: ${{ parameters.SharedInfra }}"
+      Write-Host "buildProjectPath: ${{ parameters.buildProjectPath }}"
+
+- task: NodeTool@0 
+  displayName: 'Install Node.js 16.13.x' 
+  inputs:  
+    versionSpec: '16.13.x'
+
+- task: ArtifactoryNpm@2  
+  displayName: 'npm install'  
+  inputs:       
+    command: 'install'
+    artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+    sourceRepo: 'libs-npm'
+    workingFolder: './user-service-repo/${{ parameters.buildProjectPath }}'
+
+#create dev Artifacts & Copy file into artifactory
+- template: ${{variables['System.DefaultWorkingDirectory']}}/ui/v3/templates/build-environment.yml
+  parameters:
+    ArtifactoryPath: ${{ parameters.ArtifactoryPath }}
+    ArtifactName: ${{ parameters.ArtifactName }}
+    ArtifactoryStage: 'dev'
+    BuildCommand:  ${{ parameters.devBuildCommand }}
+    IsAllowed: ${{ parameters.deployOnDevEC2 }}  
+    SharedInfra: ${{ parameters.SharedInfra }}
+    BuildPath: ${{ parameters.buildProjectPath }}
+
+#create stage Artifacts & Copy file into artifactory
+- template: ${{variables['System.DefaultWorkingDirectory']}}/ui/v3/templates/build-environment.yml
+  parameters:
+    ArtifactoryPath: ${{ parameters.ArtifactoryPath }}
+    ArtifactName: ${{ parameters.ArtifactName }}
+    ArtifactoryStage: 'stage'
+    BuildCommand:  ${{ parameters.intBuildCommand }}
+    IsAllowed: ${{ parameters.deployOnIntEC2 }}    
+    SharedInfra: ${{ parameters.SharedInfra }}    
+    BuildPath: ${{ parameters.buildProjectPath }}
+
+#create prod Artifacts & Copy file into artifactory
+- template: ${{variables['System.DefaultWorkingDirectory']}}/ui/v3/templates/build-environment.yml
+  parameters:
+    ArtifactoryPath: ${{ parameters.ArtifactoryPath }}
+    ArtifactName: ${{ parameters.ArtifactName }}
+    ArtifactoryStage: 'prod'
+    BuildCommand:  ${{ parameters.prdBuildCommand }}
+    IsAllowed: ${{ parameters.deployOnPrdEC2 }}    
+    SharedInfra: ${{ parameters.SharedInfra }}
+    BuildPath: ${{ parameters.buildProjectPath }}
+
+#create devOps Artifacts & Copy file into artifactory
+- template: ${{variables['System.DefaultWorkingDirectory']}}/ui/v3/templates/build-environment.yml
+  parameters:
+    ArtifactoryPath: ${{ parameters.ArtifactoryPath }}
+    ArtifactName: ${{ parameters.ArtifactName }}
+    ArtifactoryStage: 'devOps'
+    BuildCommand:  ${{ parameters.devOpsBuildCommand }}
+    IsAllowed: ${{ parameters.deployOnDevOpsEC2 }}    
+    SharedInfra: ${{ parameters.SharedInfra }}
+    BuildPath: ${{ parameters.buildProjectPath }}
+
+- task: ArtifactoryPublishBuildInfo@1
+  displayName: Promote build on Artifactory
+  inputs:
+    artifactoryService: 'Artifactory_GPS_BasicAuth'
+    buildName: '$(Build.DefinitionName)'
+    buildNumber: '$(Build.BuildNumber)'

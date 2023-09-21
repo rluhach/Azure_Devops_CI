@@ -1,0 +1,49 @@
+parameters:
+- name: CxFolderExclusions
+  type: string 
+  default: cvs, .svn, .hg , .git, .bzr, bin , obj,  backup, .idea, node_modules
+
+- name: CxIncludeExcludePatterns
+  type: string 
+  default: '!**/*.DS_Store, !**/*.ipr, !**/*.iws, !**/*.bak, !**/*.tmp, !**/*.aac, !**/*.aif, !**/*.iff, !**/*.m3u, !**/*.mid, !**/*.mp3,!**/*.mpa, !**/*.ra, !**/*.wav, !**/*.wma, !**/*.3g2, !**/*.3gp, !**/*.asf, !**/*.asx, !**/*.avi,!**/*.flv, !**/*.mov, !**/*.mp4, !**/*.mpg,  !**/*.rm, !**/*.swf, !**/*.vob, !**/*.wmv, !**/*.bmp, !**/*.gif, !**/*.jpg, !**/*.png, !**/*.psd, !**/*.tif, !**/*.swf, !**/*.jar, !**/*.zip, !**/*.rar, !**/*.exe, !**/*.dll, !**/*.pdb, !**/*.7z, !**/*.gz, !**/*.tar.gz, !**/*.tar, !**/*.gz, !**/*.ahtm, !**/*.ahtml, !**/*.fhtml, !**/*.hdm, !**/*.hdml,   !**/*.hsql, !**/*.ht, !**/*.hta, !**/*.htc, !**/*.htd, !**/*.war, !**/*.ear, !**/*.htmls, !**/*.ihtml, !**/*.mht, !**/*.mhtm, !**/*.mhtml, !**/*.ssi, !**/*.stm, !**/*.stml, !**/*.ttml, !**/*.txn, !**/*.xhtm, !**/*.xhtml, !**/*.class, !**/*.iml'
+
+- name: CxOverrideToFullScan
+  type: boolean 
+  default: false
+
+- name: CxPreset
+  type: string 
+  default: TransUnion Application Security Policy
+
+- name: CxServiceConnection
+  type: string 
+  default: CheckMarx-9.2-cxado
+
+- name: DevOpsRepoName
+  type: string 
+  default: TUCorp_Devops
+
+- name: checkmarxThreshold
+  type: string 
+  default: OFF 
+
+steps:    
+- checkout: self      
+  persistCredentials: true
+  clean: true
+#- checkout: ${{ parameters.DevOpsRepoName }}
+- template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+- template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Checkmarx.yml
+  parameters:
+    CxFolderExclusions: ${{ parameters.CxFolderExclusions }}
+    CxIncludeExcludePatterns: ${{ parameters.CxIncludeExcludePatterns }}
+    CxServiceConnection: ${{ parameters.CxServiceConnection }}
+- script: echo ${{ parameters.CxPreset }}
+          echo ${{ parameters.CxFolderExclusions }}
+          echo ${{ parameters.CxIncludeExcludePatterns }}
+          echo ${{ parameters.CxOverrideToFullScan }}
+  displayName: 'Pull Variables from Library for Checkmarx'
+
+
+
+

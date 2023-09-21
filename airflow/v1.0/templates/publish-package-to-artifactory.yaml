@@ -1,0 +1,38 @@
+parameters:
+- name: artifactoryParentFolder
+  default: 'GTP'
+
+- name: serviceName
+  default: 'psairflow'
+
+steps: 
+     - task: DownloadBuildArtifacts@0
+       displayName: 'Download Artifact'
+       inputs:
+         artifactName: 'drop'
+
+     - task: ArtifactoryGenericUpload@2
+       inputs:
+         artifactoryService: 'Artifactory_GPS_BasicAuth'
+         specSource: 'taskConfiguration'
+         fileSpec: |
+           {
+             "files": [
+               {
+                 "pattern": "$(Build.artifactstagingdirectory)/drop/",
+                 "target": "net-generic-local/$(artifactoryParentFolder)/$(serviceName)/"
+               }
+             ]
+           }
+         collectBuildInfo: true
+         buildName: '$(Build.DefinitionName)'
+         buildNumber: '$(Build.BuildNumber)'
+         failNoOp: true
+       displayName: Upload Package to Artifactory
+
+     - task: ArtifactoryPublishBuildInfo@1
+       inputs:
+         artifactoryService: 'Artifactory_GPS_BasicAuth'
+         buildName: '$(Build.DefinitionName)'
+         buildNumber: '$(Build.BuildNumber)'
+       displayName: Promote build on Artifactory 

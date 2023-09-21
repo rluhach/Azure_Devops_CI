@@ -1,0 +1,4 @@
+
+steps:
+  - task: SonarQubeAnalyze@4
+    displayName: 'SonarQube Run Code Analysis'

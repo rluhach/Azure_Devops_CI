@@ -1,0 +1,107 @@
+parameters:
+- name: ArtifactName
+  type: string
+
+- name: ArtifactoryPath
+  type: string
+  
+- name: SharedInfra
+  type: boolean 
+  default: false
+  
+steps:    
+- checkout: self      
+  persistCredentials: true
+  clean: true    
+
+- task: NodeTool@0 
+  displayName: 'Install Node.js 16.13.x' 
+  inputs:  
+    versionSpec: '16.13.x'
+
+- task: ArtifactoryNpm@2  
+  displayName: 'npm install'  
+  inputs:       
+    command: 'install'
+    artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+    sourceRepo: 'libs-npm'
+    workingFolder: './' 
+
+- task: Npm@1  
+  displayName: Build  
+  inputs:
+    command: 'custom'
+    customCommand: 'run build'
+
+
+- ${{ if eq(parameters.SharedInfra, false) }}:   
+  - task: CopyFiles@2
+    displayName: Copy Files into dist folder
+    inputs:      
+      Contents: |
+          dist/**/*
+      TargetFolder: './server'
+      OverWrite: true
+
+
+- ${{ if eq(parameters.SharedInfra, false) }}: 
+  - task: ArtifactoryNpm@2
+    displayName: 'Server npm install'
+    inputs:     
+      command: 'install'
+      artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+      sourceRepo: 'libs-npm'
+      workingFolder: './server'
+
+- ${{ if eq(parameters.SharedInfra, false) }}: 
+  - task: ArchiveFiles@2
+    displayName: Archive and Pack using Naming convention
+    inputs:
+      rootFolderOrFile: './server'
+      includeRootFolder: true
+      archiveType: 'zip'
+      archiveFile: '${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip'
+      replaceExistingArchive: true
+
+- ${{ if eq(parameters.SharedInfra, true) }}:   
+  - task: ArchiveFiles@2
+    displayName: Archive and Pack using Naming convention
+    inputs:
+      rootFolderOrFile: './dist'
+      includeRootFolder: true
+      archiveType: 'zip'
+      archiveFile: '${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip'
+      replaceExistingArchive: true
+    
+
+- task: CopyFiles@2
+  displayName: Copy Files for staging 
+  inputs:
+    Contents: '*.zip'
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+- task: ArtifactoryGenericUpload@2
+  displayName: Upload Package to Artifactory
+  inputs:
+    artifactoryService: 'Artifactory_GPS_BasicAuth'
+    specSource: 'taskConfiguration'
+    fileSpec: |
+      {
+        "files": [
+          {
+            "pattern": "$(Build.ArtifactStagingDirectory)/${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip",
+            "target": "${{ parameters.ArtifactoryPath }}"
+          }
+        ]
+      }
+    collectBuildInfo: true
+    buildName: '$(Build.DefinitionName)'
+    buildNumber: '$(Build.BuildNumber)'
+    failNoOp: true
+
+- task: ArtifactoryPublishBuildInfo@1
+  displayName: Promote build on Artifactory
+  inputs:
+    artifactoryService: 'Artifactory_GPS_BasicAuth'
+    buildName: '$(Build.DefinitionName)'
+    buildNumber: '$(Build.BuildNumber)'

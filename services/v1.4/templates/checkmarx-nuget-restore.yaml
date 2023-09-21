@@ -1,0 +1,24 @@
+parameters:
+  - name: testPlatform
+    default: 'linux-x64'
+  # - name: solution
+  #   default: ''
+
+steps:
+- template: dotnet-framework-install.yaml
+
+- task: DotNetCoreCLI@2
+  displayName: 'Nuget restore'
+  inputs:
+    command: 'restore'
+    projects: '**/*.sln'
+    feedsToUse: 'config'
+    nugetConfigPath: 'user-service-repo/Nuget.config'
+    externalFeedCredentials: 'ArtifactoryNugetConnection'
+    #externalFeedCredentials: 'Artifactory-NuGet-Deployer'
+    noCache: true
+
+- task: NuGetAuthenticate@0
+  inputs:
+    nuGetServiceConnections: 'ArtifactoryNugetConnection'
+- task: UseDotNet@2

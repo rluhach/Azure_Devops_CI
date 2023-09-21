@@ -1,0 +1,13 @@
+#Extract Blackduck Result 
+parameters:
+  blackduckThreshold: ''
+  
+steps:           
+  - task: PowerShell@2
+    displayName: Extracting Blackduck Results
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\main-pipeline-repo\scripts\extract-data-from-blackduck.ps1          
+      arguments: >
+        -sqprojectname "$(svcProjectName)" -blackduckThreshold "$(blackduckThreshold)"
+        

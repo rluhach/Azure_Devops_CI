@@ -1,0 +1,26 @@
+parameters:
+  solution: ''
+  projectName: ''
+
+
+steps:  
+- task: sonarsource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+  displayName: 'Prepare analysis on SonarQube'
+  inputs:
+    SonarQube: 'SonarQube - tfs9dec - Token Based'
+    projectKey: '$(projectName)'
+    projectName: '$(projectName)'
+  
+- template: build-dotnet-core.yaml
+  parameters:
+    solution: $(solution)
+
+- task: synopsys-detect.synopsys-detect.synopsys-detect-task.SynopsysDetectTask@2
+  displayName: 'Run Synopsys Detect for your build '
+  inputs:
+    Products: BD
+    BlackDuckService: 'Synopsys (BlackDuck) - tfs9dec - Token Based'
+    DetectArguments: '--detect.project.name=$(projectName)'
+
+- task: sonarsource.sonarqube.6D01813A-9589-4B15-8491-8164AEB38055.SonarQubeAnalyze@4
+  displayName: 'Run Code Analysis'

@@ -1,0 +1,30 @@
+parameters:
+  - name: solution
+    default: ''
+    
+steps:
+- task: PowerShell@2
+  displayName: 'GetVersionNumber'
+  inputs:
+    targetType: 'inline'
+    arguments: >
+      $(solution)
+    script: |
+      $projFileName = "$(solution)".Split("/")[1]
+      Write-Host "The project file name is $projFileName"          
+      $projFilePath = Get-ChildItem -Path . -Recurse $projFileName | Select-Object -ExpandProperty FullName | Resolve-Path -Relative | out-string
+      Write-Host "the project file relative path is $projFilePath"
+      $projFilePath = $projFilePath.ToString()
+      $xml=New-Object XML
+      $xml.Load("$projFilePath")                   
+      $version = $xml.Project.PropertyGroup.Version
+      Write-Host "version: $version"
+      Write-Host("##vso[task.setvariable variable=Version]$version")
+         
+- task: PowerShell@2
+  displayName: 'Update Pipeline Build Number'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $RunNumber = "$(Build.BuildNumber)".ToString().split(".")[-1]
+      Write-Host("##vso[build.updatebuildnumber]$(Version).$RunNumber")

@@ -1,0 +1,221 @@
+parameters:
+  - name: checkoutRepos
+    type: stepList
+    default: []
+    
+stages:
+- stage: Build
+  displayName: Build App
+  #condition: eq( dependencies.RSGSecurityCheckJob.outputs['sc.service.serviceExposure'], 'FrontEnd')
+  jobs:
+  - job: RSGBuildJob
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+    - task: CopyFiles@2
+      inputs:
+        sourceFolder: $(System.DefaultWorkingDirectory)/user-service-repo
+        targetFolder: $(Build.ArtifactStagingDirectory)/user-service-repo
+      displayName: Copy Files to Staging Directory
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact'
+      inputs:
+        PathtoPublish: '$(build.artifactstagingdirectory)/user-service-repo'
+        ArtifactName: 'drop_linux'
+
+  - job: NpmInstallAndBuild
+    dependsOn: RSGBuildJob
+    condition: eq( dependencies.RSGBuildJob.outputs['sc.pipeline.build'], 'true')
+    steps:
+    - task: NodeTool@0  
+      inputs:  
+        versionSpec: '16.13.x'  
+      displayName: 'Install Node.js 16.13.x'
+
+    - task: ArtifactoryNpm@2
+      displayName: 'Install dependencies - angular-cli'
+      inputs:
+        command: 'install @angular/cli@11.0.5'
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        sourceRepo: 'libs-npm'
+        workingFolder: './'
+
+    - task: ArtifactoryNpm@2  
+      displayName: 'npm install'  
+      inputs:  
+        verbose: false
+        command: 'npm install'
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        sourceRepo: 'libs-npm'
+        workingFolder: './'
+
+    - task: Npm@1  
+      displayName: Build  
+      inputs:  
+        command: custom  
+        verbose: false  
+        customCommand: 'run build'   
+  
+
+- stage: DockerBuildandPublish
+  displayName: Docker Build and Publish
+  dependsOn: Build
+  jobs:
+  - job: RSGDockerBuild
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+  - job: DockerBuild
+    dependsOn: RSGDockerBuild
+    condition: and(succeeded(),eq( dependencies.RSGDockerBuild.outputs['sc.pipeline.dockerBuild'], 'true'),eq( dependencies.RSGDockerBuild.outputs['sc.pipeline.publishImage'], 'true'))
+    variables:
+      artifactoryDockerImageProject: $[ dependencies.RSGDockerBuild.outputs['sc.param.artifactoryDockerImageProject'] ]
+      artifactoryDockerImageName: $[ dependencies.RSGDockerBuild.outputs['sc.param.artifactoryDockerImageName'] ]
+      majorVersion: $[ dependencies.RSGDockerBuild.outputs['sc.param.majorVersion' ] ]
+      projectName: $[ dependencies.RSGDockerBuild.outputs['sc.param.projectName' ] ]
+    displayName: 'Build and Publish docker images'
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+    - task: DockerInstaller@0
+      displayName: Docker Installer
+      inputs:
+        dockerVersion: 17.09.0-ce
+        releaseType: stable
+          
+    - task: DownloadBuildArtifacts@0
+      displayName: Download Artifact
+      inputs:
+        artifactName: 'drop_linux'   
+
+    - task: ArtifactoryGenericDownload@3
+      inputs:
+        connection: 'Artifactory_GPS_BasicAuth'
+        specSource: 'taskConfiguration'
+        fileSpec: |
+          {
+            "files": [
+              {
+                "pattern": "docker-dev-local/Certificates/*",
+                "target": "$(build.artifactstagingdirectory)/drop_linux/"
+              }
+            ]
+          }
+        failNoOp: true 
+        collectBuildInfo: true    
+    
+
+    # - task: PowerShell@2
+    #   displayName: Fetch Dockerfile
+    #   inputs:
+    #     targetType: inline
+    #     script: |
+    #       $Files=Get-ChildItem -Path . -Filter Dockerfile -Recurse| % { $_.FullName }
+    #       foreach ($File in $Files) {
+    #                    Copy-Item -Path $File -Destination $(build.artifactstagingdirectory)/drop_linux/ -Force
+    #                    }
+
+    - task: CopyFilesOverSSH@0
+      displayName: Copy files to Remote Docker machine
+      inputs:
+        sshEndpoint: 'CanadaVMtuads01'
+        sourceFolder: '$(build.artifactstagingdirectory)/drop_linux/'
+        contents: '**'
+        targetFolder: '/opt/devops/$(projectName)'
+        readyTimeout: '20000'
+
+
+    
+    - task: SSH@0
+      displayName: 'Docker Build on Remote machine'
+      inputs:
+        sshEndpoint: 'CanadaVMtuads01'
+        commands: |
+          /opt/devops/buildDockerImage.sh $(artifactoryDockerImageProject) $(artifactoryDockerImageName) $(majorVersion) $(projectName)
+      name: dockerbuild
+
+    - task: SSH@0
+      displayName: 'Delete files on Remote machine'
+      inputs:
+        sshEndpoint: 'CanadaVMtuads01'
+        commands: 'rm -r /opt/devops/$(projectName)'
+        
+- stage: HelmChartsPrepare
+  displayName: Helm Charts Prepare
+  dependsOn: DockerBuildandPublish
+  variables:
+    imageversion: $[ stageDependencies.DockerBuildandPublish.DockerBuild.outputs['dockerbuild.dimg.version'] ]
+    imageName: $[ stageDependencies.DockerBuildandPublish.DockerBuild.outputs['dockerbuild.dimg.name'] ]
+  jobs:
+  - job: RSGHelmChartsPrepare
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+  - job: HelmChartsPrepare
+    dependsOn: RSGHelmChartsPrepare
+    condition: and(succeeded(),eq( dependencies.RSGHelmChartsPrepare.outputs['sc.pipeline.prepareHelm'], 'true'),eq( dependencies.RSGHelmChartsPrepare.outputs['sc.pipeline.publishHelm'], 'true'))
+    variables:
+      projectName: $[ dependencies.RSGHelmChartsPrepare.outputs['sc.param.projectName'] ]
+    displayName: 'PrepareHelmCharts'
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+    - task: PowerShell@2
+      displayName: Prepare Helm Charts
+      inputs:
+        targetType: 'filePath'
+        filePath: $(System.DefaultWorkingDirectory)\main-pipeline-repo\ui\v1\scripts\prepare-helm-charts.ps1
+        arguments: >
+          $(imageversion)
+          $(imageName)
+      name: phc
+        
+  
+    - task: HelmInstaller@1
+      displayName: Helm Software installer
+      inputs: 
+        helmVersionToInstall: latest
+
+    - script: |
+        helm version
+        helm repo list
+      displayName: Validate Helm version and repo
+      
+    - task: HelmDeploy@0
+      displayName: Helm packaging
+      inputs:
+        command: 'package'
+        chartPath: $(phc.helmProjectTarget)
+        destination: $(Build.ArtifactStagingDirectory)
+
+    - task: ArtifactoryGenericUpload@2
+      inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        specSource: 'taskConfiguration'
+        fileSpec: |
+          {
+            "files": [
+              {
+                "pattern": "$(Build.ArtifactStagingDirectory)/*.tgz",
+                "target": "helm-local/"
+              }
+            ]
+          }
+        collectBuildInfo: true
+        failNoOp: true
+
+
+
+        

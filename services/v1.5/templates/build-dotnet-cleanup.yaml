@@ -1,0 +1,82 @@
+parameters:
+  - name: solution
+    default: ''
+  - name: buildConfiguration
+    default: ''
+  - name: testPlatform
+    default: 'linux-x64'
+  - name: serviceName
+    default: ''
+  - name: branchType
+    default: ''
+  - name: artifactoryParentFolder
+    default: ''
+  - name: publishWebProjects
+    default: ''
+  - name: cleanupProject
+    default: ''
+ 
+
+steps:
+- template: dotnet-framework-install.yaml
+
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'build'
+    projects: '$(solution)' 
+    arguments: '--configuration $(buildConfiguration)'
+  displayName: DotNetCore Build for Cleanup tool
+
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'publish'
+    publishWebProjects: false 
+    projects:  '$(cleanupProject)'
+    arguments: '-r $(testPlatform) -o CleanupToolPackage -c $(buildConfiguration) --self-contained'
+    zipAfterPublish: false
+    modifyOutputPath: false
+  displayName: Publishing cleanup tool
+
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: './CleanupToolPackage'
+    includeRootFolder: true
+    archiveType: 'zip'
+    archiveFile: '$(serviceName)_cleanuptool_$(build.buildnumber).zip'
+    replaceExistingArchive: true
+  displayName: Archive and Pack cleanup tool using Naming convention
+
+- task: CopyFiles@2
+  inputs:
+    Contents: '*.zip'
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+  displayName: Copy Cleanup tool for staging
+
+- task: ArtifactoryGenericUpload@2
+  inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        specSource: 'taskConfiguration'
+        fileSpec: |
+          {
+            "files": [
+              {
+                "pattern": "$(Build.ArtifactStagingDirectory)/$(serviceName)_cleanuptool_$(build.buildnumber).zip",
+                "target": "net-generic-local/$(artifactoryParentFolder)/$(serviceName)_cleanuptool/$(branchType)/"
+              }
+            ]
+          }
+        collectBuildInfo: true
+        buildName: '$(Build.DefinitionName)'
+        buildNumber: '$(Build.BuildNumber)'
+        failNoOp: true
+  displayName: Upload Cleanup tool to Artifactory
+
+- task: ArtifactoryPublishBuildInfo@1
+  inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        buildName: '$(Build.DefinitionName)'
+        buildNumber: '$(Build.BuildNumber)'
+  displayName: Promote clean up tool to Artifactory

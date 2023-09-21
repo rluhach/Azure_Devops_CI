@@ -1,0 +1,97 @@
+parameters:
+  - name: projectName
+    default: '$(Build.DefinitionName)'
+  - name: solution
+    default: ''
+
+steps:
+- template: dotnet-framework-install.yaml
+
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: $(System.DefaultWorkingDirectory)/user-service-repo/
+    Contents: |
+      **/*
+      !.git\**
+      !.vscode\**
+      !.vs\**
+      !examples\**
+      !build\**
+      !*.config
+      !*.editorconfig
+      !*.editorconfig.inferred
+      !*.yaml
+      !*.md
+      !.gitignore
+    targetFolder: $(System.DefaultWorkingDirectory)/user-service-repo-archive/
+  displayName: Copy code to archive Directory
+
+- task: ArchiveFiles@2
+  displayName: 'Zip the code'
+  inputs:
+    rootFolderOrFile: '$(System.DefaultWorkingDirectory)/user-service-repo-archive'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(System.DefaultWorkingDirectory)/code/$(projectName).$(Build.BuildNumber).zip'
+    replaceExistingArchive: true
+
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: $(System.DefaultWorkingDirectory)/code
+    targetFolder: $(Build.ArtifactStagingDirectory)/code
+  displayName: Copy Files to Staging Directory
+
+- task: DeleteFiles@1
+  displayName: Delete temp archive Directory
+  inputs:
+    SourceFolder: $(System.DefaultWorkingDirectory)/user-service-repo-archive
+    Contents: '**/*'
+    RemoveSourceFolder: true
+
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish Artifact: code'
+  inputs:
+    targetPath: $(Build.ArtifactStagingDirectory)/code
+    ArtifactName: 'code'
+
+# - task: NuGetToolInstaller@1 # Optional if nuget.exe >= 4.8.5385 is already on the path
+#   inputs:
+#     versionSpec: '*'
+#     checkLatest: true
+
+# - script: dotnet nuget locals all --clear
+
+# - script: dotnet nuget locals global-packages -c
+
+# - script: dotnet nuget locals temp -c
+
+# - task: ArtifactoryNuGet@2
+#   displayName: 'nuget restore'
+#   inputs:
+#       command: 'restore'
+#       artifactoryService: 'Artifactory_GPS_BasicAuth'
+#       targetResolveRepo: 'nuget'
+#       solutionPath: '**/*.sln'
+#       noNuGetCache: true
+#       collectBuildInfo: true
+#       buildName: '$(Build.DefinitionName)'
+#       buildNumber: '$(Build.BuildNumber)'
+#       includeEnvVars: true
+
+- task: DotNetCoreCLI@2
+  displayName: 'Nuget restore'
+  inputs:
+    command: 'restore'
+    projects: '$(solution)'
+    feedsToUse: 'config'
+    nugetConfigPath: 'user-service-repo/Nuget.config'
+    externalFeedCredentials: 'ArtifactoryNugetConnection'
+    #externalFeedCredentials: 'Artifactory-NuGet-Deployer'
+    noCache: true
+
+- task: NuGetAuthenticate@0
+  inputs:
+    nuGetServiceConnections: 'ArtifactoryNugetConnection'
+- task: UseDotNet@2
+# - script: dotnet restore $(System.DefaultWorkingDirectory)\user-service-repo\ --configfile user-service-repo/Nuget.config --runtime rhel-x64
+#- script: dotnet restore $(System.DefaultWorkingDirectory)\user-service-repo\ --runtime rhel-x64

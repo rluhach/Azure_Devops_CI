@@ -1,0 +1,29 @@
+parameters:
+- name: SqServiceConnection
+  type: string 
+  default: 'NULL'
+
+#Will be needed in the future when Gating has to be enabled
+# - name: SqQualityGate
+#   type: string 
+#   default: 'true'
+#   values:
+#       - 'false'
+#       - 'true'
+    
+
+steps:
+  - task: SonarQubePrepare@4
+    displayName: 'SonarQube Prepare Analysis'
+    inputs:
+      SonarQube: ${{ parameters.SqServiceConnection}}
+      scannerMode: 'MSBuild'
+      projectKey: '$(svcProjectName)'
+      projectName: '$(svcProjectName)'
+
+      #Will be needed in the future when Gating has to be enabled
+      # extraProperties: |
+      #   sonar.qualitygate.wait=${{ parameters.SqQualityGate}}
+      #   sonar.qualitygate.timeout=900
+
+     

@@ -1,0 +1,110 @@
+parameters:
+  - name: solution
+    default: ''
+  - name: buildConfiguration
+    default: ''
+  - name: testPlatform
+    default: 'linux-x64'
+  - name: serviceName
+    default: ''
+  - name: branchType
+    default: ''
+  - name: artifactoryParentFolder
+    default: ''
+  - name: publishWebProjects
+    default: ''
+  - name: vaultAgent
+    type: boolean
+    default: false
+
+steps:
+- template: dotnet-framework-install.yaml
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'build'
+    projects: '$(solution)' 
+    arguments: '--configuration $(buildConfiguration)'
+  displayName: DotNetCore Build
+
+- task: DotNetCoreCLI@2
+  displayName: 'DotNetCore Unit Test'
+  inputs:
+    command: test
+    projects: |
+      **/*Test*/*.csproj
+      !**/*.Api.Test.csproj
+      !**/*.Performance.Test.csproj
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'pack'
+    packagesToPack: '$(solution)' 
+    versioningScheme: 'off'
+  displayName: Packaging
+
+- task: DotNetCoreCLI@2
+  inputs:
+    command: 'publish'
+    publishWebProjects: '$(publishWebProjects)'   
+    projects: '$(solution)'  
+    arguments: '-r $(testPlatform) -o CorePackage -c $(buildConfiguration) --self-contained'
+    zipAfterPublish: false
+    modifyOutputPath: false
+  displayName: Publishing
+
+- task: CopyFiles@2
+  displayName: Copy Deployment Scripts
+  inputs:
+    Contents: '$(System.DefaultWorkingDirectory)\cd-pipeline-repo\services\v1.4.1\scripts\deployment-scripts\**'
+    TargetFolder: '$(System.DefaultWorkingDirectory)\CorePackage'
+    overwrite: true
+
+- ${{ if eq(parameters.vaultAgent, true) }}:   
+  - task: CopyFiles@2
+    inputs:
+      Contents: '$(System.DefaultWorkingDirectory)\user-service-repo\deploy\vault\**'
+      TargetFolder: '$(System.DefaultWorkingDirectory)\CorePackage'
+      overwrite: true
+    displayName: Copy vault config files
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: './CorePackage'
+    includeRootFolder: true
+    archiveType: 'zip'
+    archiveFile: '$(serviceName)_$(build.buildnumber).zip'
+    replaceExistingArchive: true
+  displayName: Archive and Pack using Naming convention
+
+- task: CopyFiles@2
+  inputs:
+    Contents: '*.zip'
+    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+  displayName: Copy Files for staging
+
+- task: ArtifactoryGenericUpload@2
+  inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        specSource: 'taskConfiguration'
+        fileSpec: |
+          {
+            "files": [
+              {
+                "pattern": "$(Build.ArtifactStagingDirectory)/$(serviceName)_$(build.buildnumber).zip",
+                "target": "net-generic-local/$(artifactoryParentFolder)/$(serviceName)/$(branchType)/"
+              }
+            ]
+          }
+        collectBuildInfo: true
+        buildName: '$(Build.DefinitionName)'
+        buildNumber: '$(Build.BuildNumber)'
+        failNoOp: true
+  displayName: Upload Package to Artifactory
+
+- task: ArtifactoryPublishBuildInfo@1
+  inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        buildName: '$(Build.DefinitionName)'
+        buildNumber: '$(Build.BuildNumber)'
+  displayName: Promote build on Artifactory

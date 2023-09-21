@@ -1,0 +1,194 @@
+
+parameters:
+  - name: checkoutRepos
+    type: stepList
+    default: []
+    
+stages:
+- stage: SecurityCheckJob
+  displayName: CheckMarx Scan
+  jobs:
+  - job: RSGSecurityCheckJob
+    displayName: Read Nuget Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+  - job: FailIfCheckMarxThresholdIsInvalid
+    dependsOn: RSGSecurityCheckJob
+    condition: and( eq( dependencies.RSGSecurityCheckJob.outputs['sc.pipeline.checkMarxScan'], 'true') , notIn( dependencies.RSGSecurityCheckJob.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE'))
+    steps:
+    - script: |
+        echo Failing this Job as CheckMarxThreshold value is invalid 
+        exit 1
+    
+  - job: SecurityCheckJob
+    dependsOn: RSGSecurityCheckJob
+    condition: and( eq( dependencies.RSGSecurityCheckJob.outputs['sc.pipeline.checkMarxScan'], 'true') , in( dependencies.RSGSecurityCheckJob.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE'))
+    variables:
+      cxPreset: $[ dependencies.RSGSecurityCheckJob.outputs['sc.param.cxPreset'] ]
+      projectName: $[ dependencies.RSGSecurityCheckJob.outputs['sc.param.cxProjectName'] ]
+      checkmarxThreshold: $[ dependencies.RSGSecurityCheckJob.outputs['sc.param.checkmarxThreshold'] ]
+      CxFolderExclusions: $[ dependencies.RSGSecurityCheckJob.outputs['sc.param.CxFolderExclusions'] ]
+    displayName: 'Security check the source code'
+    steps:
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Checkmarx.yml
+        parameters:
+          checkmarxThreshold: $(checkmarxThreshold)
+          CxFolderExclusions: $(CxFolderExclusions)
+         
+- stage: BuildDotNet
+  displayName: Build Dot Net
+  jobs:
+  - job: RSGBuildDotNet
+    displayName: Read Nuget Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+  - job: BuildDotNet
+    dependsOn: RSGBuildDotNet
+    condition: and( eq( dependencies.RSGBuildDotNet.outputs['sc.pipeline.build'], 'true'), eq( dependencies.RSGBuildDotNet.outputs['sc.pipeline.sonarqubeScan'], 'false') )
+    variables:
+      solution: $[ dependencies.RSGBuildDotNet.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ dependencies.RSGBuildDotNet.outputs['sc.param.buildConfiguration'] ]
+      projectName: $[ dependencies.RSGBuildDotNet.outputs['sc.param.projectName'] ]      
+    displayName: Build dotnet core project
+    steps:
+      - ${{ each repo in parameters.checkoutRepos }}:
+        - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}     
+          
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters: 
+          projectName: $(projectName)
+        
+      #Build dotnet core project"
+      - template: templates/build-dotnet-core.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration)
+
+- stage: BuildDotNetWithSonar
+  displayName: Build Dot Net with SonarQube
+  jobs:
+  - job: RSGBuildDotNetSonar
+    displayName: Read Nuget Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+  - job: FailIfSonarqubeThresholdIsInvalid
+    dependsOn: RSGBuildDotNetSonar
+    condition: and( eq( dependencies.RSGBuildDotNetSonar.outputs['sc.pipeline.sonarqubeScan'], 'true') , notIn( dependencies.RSGBuildDotNetSonar.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE'))
+    steps:
+    - script: |
+        echo Failing this Job as sonarqubeThreshold value is invalid 
+        exit 1
+
+  - job: BuildDotNetSonar
+    dependsOn: RSGBuildDotNetSonar
+    condition: and( eq( dependencies.RSGBuildDotNetSonar.outputs['sc.pipeline.build'], 'true') , eq( dependencies.RSGBuildDotNetSonar.outputs['sc.pipeline.sonarqubeScan'], 'true') , in( dependencies.RSGBuildDotNetSonar.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE'))
+    variables:
+      solution: $[ dependencies.RSGBuildDotNetSonar.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ dependencies.RSGBuildDotNetSonar.outputs['sc.param.buildConfiguration'] ]
+      sonarqubeThreshold: $[ dependencies.RSGBuildDotNetSonar.outputs['sc.param.sonarqubeThreshold'] ]
+      projectName: $[ dependencies.RSGBuildDotNetSonar.outputs['sc.param.projectName'] ]      
+    displayName: Build dotnet core project
+    steps:
+      - ${{ each repo in parameters.checkoutRepos }}:
+        - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}      
+        
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          projectName: $(projectName)
+        
+      #Build dotnet core project"
+      - template: templates/build-dotnet-core-Sonarqube.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration)
+          sonarqubeThreshold: $(sonarqubeThreshold)
+                    
+- stage: BlackDuckScan
+  displayName: BlackDuck Scan
+  jobs:
+  - job: RSGBlackDuckScan
+    displayName: Read Nuget Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+  
+  - job: FailIfBlackduckThresholdIsInvalid
+    dependsOn: RSGBlackDuckScan
+    condition: and( eq( dependencies.RSGBlackDuckScan.outputs['sc.pipeline.blackDuckScan'], 'true') , notIn( dependencies.RSGBlackDuckScan.outputs['sc.param.blackduckThreshold'], 'STRICT', 'MODERATE'))
+    steps:
+    - script: |
+        echo Failing this Job as blackduckThreshold value is invalid 
+        exit 1
+    
+  - job: BlackDuckScan
+    dependsOn: RSGBlackDuckScan
+    condition: and( eq( dependencies.RSGBlackDuckScan.outputs['sc.pipeline.blackDuckScan'], 'true') , in( dependencies.RSGBlackDuckScan.outputs['sc.param.blackduckThreshold'], 'STRICT', 'MODERATE'))
+    variables:
+      blackduckThreshold: $[ dependencies.RSGBlackDuckScan.outputs['sc.param.blackduckThreshold'] ]
+    displayName: BlackDuck scan on built project
+    steps:
+      - ${{ each repo in parameters.checkoutRepos }}:
+        - ${{ each step in repo }}:
+              ${{ step.key }}: ${{ step.value }}      
+  # Run the BlackDuck scan  
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml        
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Synopsys.yml
+        parameters:
+          SnTimeOut: 2400
+          SnVersionUpdate: true
+          SnServiceConnection: Synopsys (BlackDuck) - tfs9dec - Token Based
+    
+- stage: 'PublishNuGetPackage'
+  displayName: 'Publish NuGet Package'
+  dependsOn: 'BlackDuckScan'
+  condition: succeeded()
+  jobs:
+  - job: RSGPublishNuGetPackage
+    displayName: Read Nuget Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+  - job:
+    displayName: Publish Nuget Package
+    dependsOn: RSGPublishNuGetPackage
+    condition: eq( dependencies.RSGPublishNuGetPackage.outputs['sc.pipeline.publishPackage'], 'true')
+    steps:
+    - download: current
+      artifact: 'packages'    
+    - task: ArtifactoryGenericUpload@2
+      displayName: 'Publish Package in Artifactory'
+      inputs:
+        artifactoryService: 'Artifactory_GPS_BasicAuth'
+        specSource: 'taskConfiguration'
+        fileSpec: |
+         {
+           "files": [
+             {             
+               "pattern": "$(Pipeline.Workspace)/*.nupkg",
+               "target": "nuget/GTP/"
+             },
+             {             
+               "pattern": "$(Pipeline.Workspace)/*.zip",
+               "target": "nuget/GTP/Code/"
+             }
+           ]
+         }
+        collectBuildInfo: true
+        failNoOp: true
+        

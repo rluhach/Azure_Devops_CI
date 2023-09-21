@@ -1,0 +1,322 @@
+parameters:
+  - name: checkoutRepos
+    type: stepList
+    default: []
+
+  - name: blackduckViolationPolicy
+    default: 'CRITICAL'
+
+  - name: serviceconfigfilename
+    default: ''
+
+  - name: project
+    default: ''
+
+  - name: vaultAgent
+    default: false
+
+  - name: service
+    default: ''
+
+
+stages:
+- stage: ReadServiceConfigStage
+  displayName: Read ServiceConfig Stage in CI
+  jobs:
+  - job: ReadServiceConfig
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+- stage: SecurityCheckJob
+  dependsOn: 
+  - ReadServiceConfigStage
+  displayName: CheckMarx Scan
+  jobs:
+  - job: FailIfCheckMarxThresholdIsInvalid
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') , eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.checkMarxScan'], 'true') , notIn( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE'))
+    steps:
+    - script: |
+        echo Failing this Job as CheckMarxThreshold value is invalid 
+        exit 1
+    
+  - job: SecurityCheckJob
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') , eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.checkMarxScan'], 'true') , in( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE'))
+    variables:
+      cxPreset: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.cxPreset'] ]
+      projectName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.cxProjectName'] ]
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+      checkmarxThreshold: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'] ]
+      CxFolderExclusions: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.CxFolderExclusions'] ]
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]      
+    displayName: 'Security check the source code'
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+        parameters:
+          ApplicationName: $(applicationName)
+            #Prepare dotnet core project
+      - template: templates/checkmarx-nuget-restore.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Checkmarx.yml
+        parameters:
+          checkmarxThreshold: $(checkmarxThreshold)
+          CxFolderExclusions: $(CxFolderExclusions)
+        
+
+- stage: BuildDotNetWithSonar
+  dependsOn: 
+  - ReadServiceConfigStage
+  - SecurityCheckJob
+  displayName: Build Dot Net with SonarQube
+  jobs:
+  - job: FailIfSonarqubeThresholdIsInvalid
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'true') , notIn( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    steps:
+    - script: |
+        echo Failing this Job as sonarqubeThreshold value is invalid 
+        exit 1
+  
+  - job: BuildDotNetSonarEC2
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') , eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'true') , in( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    variables:
+      sonarqubeThreshold: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'] ]
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+      repoName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.repoName'] ]
+      projectName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.projectName'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/') }}:
+        branchName: $[ variables['Build.SourceBranch'] ]
+        pullRequestId: ""
+      ${{ if startsWith(variables['Build.SourceBranch'], 'refs/pull/') }}:
+        branchName: $[ variables['System.PullRequest.SourceBranch'] ]
+        pullRequestId: $[ variables['System.PullRequest.PullRequestId'] ]
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+    displayName: Build dotnet core project
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true  
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true 
+      - checkout: cdtemplates
+        path: .\s\cd-pipeline-repo
+        clean: true
+
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+          solution: $(solution)
+        
+      #Build dotnet core project"
+      - template: templates/build-dotnet-core-Sonarqube-EC2.yaml
+        parameters:
+          solution: $(solution)
+          ApplicationName: $(applicationName)
+          repoName: $(repoName)
+          projectName: $(projectName)
+          buildConfiguration: $(buildConfiguration)
+          testPlatform: $(testPlatform)
+          serviceName: $(serviceName)
+          branchType: $(branchType)
+          vaultAgent: ${{ parameters.vaultAgent }}
+          branchName: $(branchName)
+          pullRequestId: $(pullRequestId)
+          publishWebProjects: $(publishWebProjects)
+          artifactoryParentFolder: $(artifactoryParentFolder)
+  
+
+  - job: BuildDotNetSonar
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.build'], 'true') , eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'true') , in( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      sonarqubeThreshold: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      branchName: ${{variables['Build.SourceBranch']}} 
+    displayName: Build dotnet core project
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true  
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+      - checkout: cdtemplates
+        path: .\s\cd-pipeline-repo
+        clean: true
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+          solution: $(solution)
+        
+      #Build dotnet core project"
+      - template: templates/build-dotnet-core-Sonarqube.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration)
+          sonarqubeThreshold: $(sonarqubeThreshold)
+          testPlatform: $(testPlatform)
+          branchName: $(branchName)
+          publishWebProjects: $(publishWebProjects)
+
+                    
+- stage: BuildDotNet
+  dependsOn: 
+  - ReadServiceConfigStage
+  - BuildDotNetWithSonar
+  displayName: Build Dot Net
+  jobs:
+  - job: BuildDotNetEC2
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'false'), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') )
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+    displayName: Build dotnet core project for EC2 Deployment
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+      - checkout: cdtemplates
+        path: .\s\cd-pipeline-repo
+        clean: true
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+          solution: $(solution)
+       
+      #Build dotnet core project"
+      
+      - template: templates/build-dotnet-core-EC2.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration)
+          testPlatform: $(testPlatform)
+          serviceName: $(serviceName)
+          branchType: $(branchType)
+          vaultAgent: ${{ parameters.vaultAgent }}
+          publishWebProjects: $(publishWebProjects)
+          artifactoryParentFolder: $(artifactoryParentFolder)
+  
+  - job: BuildDotNetCleanup
+    condition: and( or( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.cleanupOnDevEC2'], 'true'), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.cleanupOnIntEC2'], 'true')), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') )
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+      cleanupProject: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.cleanupProject'] ]
+    displayName: Build Clean up tool for EC2 Deployment
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+      - checkout: cdtemplates
+        path: .\s\cd-pipeline-repo
+        clean: true
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+          solution: $(solution)
+       
+      #Build dotnet core project"
+      
+      - template: templates/build-dotnet-cleanup.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration)
+          testPlatform: $(testPlatform)
+          serviceName: $(serviceName)
+          branchType: $(branchType)
+          publishWebProjects: $(publishWebProjects)
+          artifactoryParentFolder: $(artifactoryParentFolder)
+          cleanupProject: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.cleanupProject'] ]
+          
+  - job: BuildDotNet  
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.build'], 'true'), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'false') )
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]      
+    displayName: Build dotnet core project
+    steps:
+      #Prepare dotnet core project
+      - template: templates/prepare-dotnet-core.yaml
+        parameters:
+          testPlatform: $(testPlatform)
+          solution: $(solution)
+      #Build dotnet core project"
+      - template: templates/build-dotnet-core.yaml
+        parameters:
+          solution: $(solution)
+          buildConfiguration: $(buildConfiguration) 
+          publishWebProjects: $(publishWebProjects)
+          testPlatform: $(testPlatform)   
+                 
+- stage: BlackDuckScan
+  dependsOn: 
+  - ReadServiceConfigStage
+  - BuildDotNet
+  displayName: BlackDuck Scan
+  jobs:
+  - job: BlackDuckScan
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true') , eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.blackDuckScan'], 'true'))
+    variables:
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+    displayName: BlackDuck scan on built project
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true  
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+  # Run the BlackDuck scan  
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+        parameters:
+          ApplicationName: $(applicationName)        
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Synopsys.yml
+        parameters:
+          SnTimeOut: 2400
+          SnServiceConnection: Synopsys (BlackDuck) - tfs9dec - Token Based
+          SnDetectPolicy: ${{ parameters.blackduckViolationPolicy }}
+

@@ -1,0 +1,76 @@
+parameters:
+  - name: checkoutRepos
+    type: stepList
+    default: []
+
+  - name: serviceconfigfilename
+    default: ''
+
+  - name: service
+    default: ''
+
+stages:
+- stage: ReadServiceConfigStage
+  displayName: Read ServiceConfig Stage in CI
+  jobs:
+  - job: ReadServiceConfig
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+                  
+- stage: BuildandPrepareDeploymentPackage
+  dependsOn: 
+  - ReadServiceConfigStage
+  displayName: Build and Prepare Airflow Deployment Package
+  condition: and(not(failed()), not(canceled()), eq( dependencies.ReadServiceConfigStage.outputs['ReadServiceConfig.sc.pipeline.buildForEC2'], 'true'))
+  jobs:
+  - job: BuildandPrepareDeploymentPackage
+    variables:
+      packageOutputPath: '$(Build.ArtifactStagingDirectory)/Package'
+      airflowConfigFilesPath: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.airflowConfigFilesPath'] ]
+      airflowDagFilesPath: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.airflowDagFilesPath'] ]
+    displayName: Build airflow components deployment package
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+      - checkout: cdtemplates
+        path: .\s\cd-pipeline-repo
+        clean: true
+      - template: templates/build-airflow-deployment-files.yaml    #Build deployment files
+        parameters:
+          airflowConfigFilesPath: $(airflowConfigFilesPath)
+          airflowDagFilesPath: $(airflowDagFilesPath)
+      - template: templates/prepare-airflow-deployment-package.yaml   #Prepare deployment package
+        parameters:
+          packageOutputPath: $(packageOutputPath)
+      - template: templates/publish-pipeline-artifact.yaml   #Publish pipeline artifact
+        parameters:
+          packageOutputPath: $(packageOutputPath)
+
+- stage: PublishPackageToArtifactory
+  dependsOn: 
+  - ReadServiceConfigStage
+  - BuildandPrepareDeploymentPackage
+  displayName: Publish Package to Artifactory
+  condition: and(not(failed()), not(canceled()), eq( dependencies.ReadServiceConfigStage.outputs['ReadServiceConfig.sc.pipeline.publishPackage'], 'true'))
+  variables:
+    artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+    serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+  jobs:
+  - job: PublishAirflowDeploymentPackageToArtifactory
+    variables:
+      packageOutputPath: '$(Build.ArtifactStagingDirectory)/Package'
+    displayName: Publish Package to Artifactory
+    steps:
+      - template: templates/publish-package-to-artifactory.yaml
+        parameters:
+          artifactoryParentFolder: $(artifactoryParentFolder)
+          serviceName: $(serviceName)
+
+   

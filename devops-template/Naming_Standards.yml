@@ -1,0 +1,201 @@
+parameters:
+- name: ApplicationName
+  type: string 
+  default: 'NULL'
+
+steps:
+  - task: PowerShell@2
+    displayName: 'Project Naming Standards'
+    inputs:
+
+      targetType: 'inline'
+      script: |
+        $projectName = $env:SYSTEM_TEAMPROJECT
+        $collectionUri = $env:SYSTEM_COLLECTIONURI
+        $collectionName = $collectionUri.Split("/")[3]
+        $pipelineName = $env:Build_DefinitionName
+        $reposName = $env:Build_Repository_Name
+
+        if( $collectionName -eq "TUCorp" )
+        {    
+          #use repo name instead of project name
+          $CxRegion = "US"
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"      
+        }
+        elseif( $collectionName -eq "Healthcare" )
+        {
+          $CxRegion = "US"
+          $serviceProjectName = "$pipelineName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "DecisionCentre" )
+        {
+          $CxRegion = "US"
+          $serviceProjectName = "$CxRegion-DC-$reposName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "India" )
+        {
+          $CxRegion = "IN"
+          $serviceProjectName = "$pipelineName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "SouthAfrica" )
+        {    
+          $CxRegion = "ZA"
+          $serviceProjectName = "$CxRegion-$projectName-$reposName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"    
+        }
+        elseif( $collectionName -eq "Brasil" )
+        {    
+          $CxRegion = "BR"
+          $serviceProjectName = "$CxRegion-$projectName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"    
+        }
+        elseif( $collectionName -eq "DHI" )
+        {      
+          $CxRegion = "US"
+          if('${{parameters.ApplicationName}}' -ne 'NULL')
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-${{parameters.ApplicationName}}"
+          }
+          elseif($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName-$reposName"
+          }
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"    
+        }
+        elseif( $collectionName -eq "Factortrust" )
+        {    
+          $CxRegion = "US"
+          if($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName-$reposName"
+          }
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"    
+          }
+        elseif( $collectionName -eq "HPS" )
+        # US-Healthcare-HPS-DataExtraction
+        {    
+          $CxRegion = "US-Healthcare"
+          if($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$reposName"
+          }
+          $teamName = "CxServer\US\$serviceProjectName"    
+        }
+        elseif( $collectionName -eq "PlatformServices" )
+        {
+          $CxRegion = "US"
+          if(('${{parameters.ApplicationName}}' -ne '') -and ('${{parameters.ApplicationName}}' -ne 'NULL'))
+          {  
+          $serviceProjectName = "$CxRegion-$projectName-${{parameters.ApplicationName}}"
+          }
+          else
+          {
+          $serviceProjectName = "$CxRegion-$projectName-$reposName"
+          }
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "TURSS" )
+        {  
+          $CxRegion = "US"        
+          if(('${{parameters.ApplicationName}}' -ne '') -and ('${{parameters.ApplicationName}}' -ne 'NULL'))
+          {
+          $serviceProjectName = "${{parameters.ApplicationName}}"
+          }
+          else
+          {          
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"          
+          }
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "TUCA" )
+        {
+          $CxRegion = "GT"
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "TUCI" )
+        {
+          $CxRegion = "US"
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "Datalink" )
+        {
+          $CxRegion = "US"
+          if('${{parameters.ApplicationName}}' -ne 'NULL')
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-${{parameters.ApplicationName}}"
+          }
+          elseif($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName-$reposName"
+          }
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "DCUS" )
+        {
+          $CxRegion = "US"
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          $teamName = "CxServer\$CxRegion\$serviceProjectName"
+        }
+        elseif( $collectionName -eq "TUGB" )
+        # TUGB (UK)
+        {    
+          $CxRegion = "GB"
+          if($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$reposName"
+          }
+          $teamName = "CxServer\US\$serviceProjectName"    
+        }
+        elseif( $collectionName -eq "TUMX" )
+        # Mexico
+        {    
+          $CxRegion = "MX"
+          if($projectName -eq $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$projectName"
+          }
+          elseif($projectName -ne $reposName)
+          {
+          $serviceProjectName = "$CxRegion-$collectionName-$reposName"
+          }
+          $teamName = "CxServer\US\$serviceProjectName"    
+        }
+
+        Write-Host "##vso[task.setvariable variable=svcProjectName]$serviceProjectName"
+        Write-Host "##vso[task.setvariable variable=CxTeamName]$teamName"
+        Write-Host "##vso[task.setvariable variable=CxRegion]$CxRegion"
+
+        Write-Host "Region : $CxRegion"
+        Write-Host "Project Name : $projectName"
+        Write-Host "Collection URL : $collectionUri"
+        Write-Host "Collection Name : $collectionName"
+        Write-Host "Service Project Name : $serviceProjectName"
+        Write-Host "Team Name : $teamName"
+        Write-Host "Pipeline Name : $pipelineName"
+        Write-Host "Repository Name : $reposName"

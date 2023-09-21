@@ -1,0 +1,129 @@
+parameters:
+  ArtifactoryPath: ''
+  ArtifactName: ''
+  ArtifactoryStage: ''
+  BuildCommand: ''
+  IsAllowed: ''  
+  SharedInfra: false
+
+steps:
+  - task: PowerShell@2
+    displayName: 'Show ${{ parameters.ArtifactoryStage }} parameter values' 
+    inputs:
+      targetType: 'inline' 
+      script: | 
+        Write-Host "ArtifactoryPath: ${{ parameters.ArtifactoryPath }}"
+        Write-Host "ArtifactName: ${{ parameters.ArtifactName }}"
+        Write-Host "ArtifactoryStage: ${{ parameters.ArtifactoryStage }}"  
+        Write-Host "BuildCommand: ${{ parameters.BuildCommand }}"
+        Write-Host "IsAllowed: ${{ parameters.IsAllowed }}" 
+        Write-Host "SharedInfra: ${{ parameters.SharedInfra }}"
+
+  - task: Npm@1  
+    displayName: 'Build ${{ parameters.ArtifactoryStage }}'   
+    inputs:
+      command: 'custom'
+      customCommand: 'run ${{ parameters.BuildCommand }}'
+      workingDir: './user-service-repo'
+
+  - task: PowerShell@2
+    displayName: 'List files Before in server folder' 
+    inputs:
+      targetType: 'inline' 
+      script: |         
+        Write-Host "Show all folder content"
+        Get-ChildItem -Path $(Build.SourcesDirectory)\user-service-repo\server\*.* -Recurse -Force
+
+  - ${{ if eq(parameters.SharedInfra, false) }}:   
+    - task: CopyFiles@2
+      displayName: Copy Files into dist folder     
+      inputs:      
+        SourceFolder: './user-service-repo'      
+        Contents: |
+            dist/**/*
+        TargetFolder: './user-service-repo/server'
+        CleanTargetFolder: true
+
+  - task: PowerShell@2
+    displayName: 'List files After in server folder' 
+    inputs:
+      targetType: 'inline' 
+      script: |         
+        Write-Host "Show all folder content"
+        Get-ChildItem -Path $(Build.SourcesDirectory)\user-service-repo\server\*.* -Recurse -Force
+
+  - task: DeleteFiles@1
+    displayName: Delete existing zip artifact
+    inputs:
+      SourceFolder: './user-service-repo'
+      Contents: |
+          **/*.zip
+
+  - ${{ if eq(parameters.SharedInfra, false) }}: 
+    - task: ArchiveFiles@2
+      displayName: Archive and Pack using Naming convention
+      inputs:
+        rootFolderOrFile: './user-service-repo/server'
+        includeRootFolder: true
+        archiveType: 'zip'
+        archiveFile: '${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip'
+        replaceExistingArchive: true
+
+  - ${{ if eq(parameters.SharedInfra, true) }}:   
+    - task: ArchiveFiles@2
+      displayName: Archive and Pack using Naming convention
+      inputs:
+        rootFolderOrFile: './user-service-repo/dist'
+        includeRootFolder: true
+        archiveType: 'zip'
+        archiveFile: '${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip'
+        replaceExistingArchive: true
+
+  - task: PowerShell@2
+    displayName: 'List files Before in $(Build.ArtifactStagingDirectory)' 
+    inputs:
+      targetType: 'inline' 
+      script: |         
+        Write-Host "Show all folder content"
+        Get-ChildItem -Path $(Build.ArtifactStagingDirectory)\*.* -Recurse -Force
+   
+  - task: DeleteFiles@1
+    displayName: 'Delete zip file from $(Build.ArtifactStagingDirectory)'
+    inputs:
+      SourceFolder: '$(Build.ArtifactStagingDirectory)'
+      Contents: |           
+          **/*.zip
+   
+  - task: CopyFiles@2
+    displayName: Copy Files for staging
+    inputs:
+      Contents: '*.zip'
+      TargetFolder: '$(Build.ArtifactStagingDirectory)/${{ parameters.ArtifactoryStage }}'
+      CleanTargetFolder: true
+
+  - task: PowerShell@2
+    displayName: 'List files After in $(Build.ArtifactStagingDirectory)' 
+    inputs:
+      targetType: 'inline' 
+      script: |         
+        Write-Host "Show all folder content"
+        Get-ChildItem -Path $(Build.ArtifactStagingDirectory)\*.* -Recurse -Force 
+
+  - task: ArtifactoryGenericUpload@2
+    displayName: Upload Package to Artifactory
+    inputs:
+      artifactoryService: 'Artifactory_GPS_BasicAuth'
+      specSource: 'taskConfiguration'
+      fileSpec: |
+        {
+          "files": [
+            {
+              "pattern": "$(Build.ArtifactStagingDirectory)/${{ parameters.ArtifactoryStage }}/${{ parameters.ArtifactName }}_$(Build.BuildNumber).zip",
+              "target": "${{ parameters.ArtifactoryPath }}/${{ parameters.ArtifactoryStage }}/"
+            }
+          ]
+        }
+      collectBuildInfo: true
+      buildName: '$(Build.DefinitionName)'
+      buildNumber: '$(Build.BuildNumber)'
+      failNoOp: true

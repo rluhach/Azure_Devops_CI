@@ -1,0 +1,88 @@
+parameters:
+- name: SonarQubeApplicationKey
+  type: string
+
+- name: SonarQubeApplicationName
+  type: string
+
+- name: repoName
+  default: ''
+
+- name: branchName
+  default: ''
+
+- name: applicationName
+  default: ''
+
+- name: buildProjectPath
+  default: ''
+
+- name: lcovCoveragePath
+  default: ''
+
+- name: unitTestCommand
+  default: ''
+
+
+steps:    
+- template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+  parameters:
+    ApplicationName: $(applicationName)
+
+- task: SonarQubePrepare@4
+  inputs:
+    SonarQube: 'SonarQube - tfs9dec - Token Based'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: '$(svcProjectName)'
+    cliProjectName: '$(svcProjectName)'
+    cliSources: '.'
+    extraProperties: |
+      # Additional properties that will be passed to the scanner, 
+      # Put one key=value per line, example
+      sonar.exclusions=DevOps/**/*,**/.jfrog/**/*,**/*.spec.ts,./.scannerwork/**/*,**/node_modules/**/*, **/build/*, **/helm/**/*, **/coverage/**
+      sonar.test.exclusions=test/**/*
+      sonar.javascript.lcov.reportPaths=./user-service-repo/${{ parameters.buildProjectPath }}/${{parameters.lcovCoveragePath}}
+  displayName: 'SonarQube Prepare Analysis'  
+
+- task: NodeTool@0 
+  displayName: 'Install Node.js 16.13.x' 
+  inputs:  
+    versionSpec: '16.13.x'
+        
+- task: ArtifactoryNpm@2  
+  displayName: 'npm install'  
+  inputs:       
+    command: 'install'
+    artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+    sourceRepo: 'libs-npm'
+    workingFolder: './user-service-repo/${{ parameters.buildProjectPath }}'
+
+- task: Npm@1  
+  displayName: Build  
+  inputs:
+    command: 'custom'
+    customCommand: 'run build'
+    workingDir: './user-service-repo/${{ parameters.buildProjectPath }}'
+
+- task: Npm@1  
+  displayName: npm run test
+  inputs:
+    command: 'custom'
+    customCommand: 'run ${{ parameters.unitTestCommand }}'
+    workingDir: './user-service-repo/${{ parameters.buildProjectPath }}'
+
+- task: SonarQubeAnalyze@4
+  displayName: 'SonarQube Run Code Analysis'
+
+- template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Sonarqube_Publish.yml
+
+
+# - template: ${{variables['System.DefaultWorkingDirectory']}}/ui/v3/templates/extract-sonarqube-results.yaml
+#   parameters:
+#     sonarqubeThreshold: $(sonarqubeThreshold)
+#     branchName: $(branchName)
+
+
+
+

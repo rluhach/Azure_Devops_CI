@@ -1,0 +1,12 @@
+parameters:
+  sonarqubeThreshold: ''
+  branchName: ''
+#Extract SonarQube Result 
+steps:           
+  - task: PowerShell@2
+    displayName: Extract SonarQube Result
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\main-pipeline-repo\ui\v3\scripts\extract-data-from-sonar.ps1         
+      arguments: >
+        -sqprojectname "$(svcProjectName)"  -sonarqubeThreshold "$(sonarqubeThreshold)" -branchName "$(branchName)"

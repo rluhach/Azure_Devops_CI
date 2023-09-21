@@ -1,0 +1,244 @@
+parameters:
+  - name: checkoutRepos
+    type: stepList
+    default: []
+
+  - name: blackduckViolationPolicy
+    default: 'CRITICAL'
+
+  - name: serviceconfigfilename
+    default: ''
+
+  - name: project
+    default: ''
+
+  - name: vaultAgent
+    default: false
+
+  - name: service
+    default: ''
+
+  - name: sharedInfra    
+    default: false
+
+stages:
+- stage: ReadServiceConfigStage
+  displayName: Read ServiceConfig Stage in CI
+  jobs:
+  - job: ReadServiceConfig
+    displayName: Read Service Configs
+    steps:
+    - ${{ each repo in parameters.checkoutRepos }}:
+      - ${{ each step in repo }}:
+            ${{ step.key }}: ${{ step.value }}
+
+- stage: SecurityCheckJob
+  dependsOn: 
+  - ReadServiceConfigStage
+  displayName: CheckMarx Scan
+  jobs:
+  - job: FailIfCheckMarxThresholdIsInvalid
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.checkMarxScan'], 'true') , notIn( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    steps:
+    - script: |
+        echo Failing this Job as CheckMarxThreshold value is invalid 
+        exit 1
+    
+  - job: SecurityCheckJob
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.checkMarxScan'], 'true') , in( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    variables:
+      cxPreset: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.cxPreset'] ]
+      projectName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.cxProjectName'] ]
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+      checkmarxThreshold: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.checkmarxThreshold'] ]
+    displayName: 'Security check the source code'
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+        parameters:
+          ApplicationName: $(applicationName)
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Checkmarx.yml
+        parameters:
+          checkmarxThreshold: $(checkmarxThreshold)
+        
+- stage: BuildNpmWithSonar
+  dependsOn: 
+  - ReadServiceConfigStage
+  - SecurityCheckJob
+  displayName: Build Npm with SonarQube
+  jobs:
+  - job: FailIfSonarqubeThresholdIsInvalid
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'true') , notIn( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    steps:
+    - script: |
+        echo Failing this Job as sonarqubeThreshold value is invalid 
+        exit 1
+  
+  - job: BuildNpmWithSonarEC2
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.sonarqubeScan'], 'true') , in( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'], 'STRICT', 'MODERATE', 'OFF'))
+    variables:
+      sonarqubeThreshold: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.sonarqubeThreshold'] ]
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      projectName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.projectName'] ]
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+      repoName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.repoName'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      ${{ if startsWith(variables['Build.SourceBranch'], 'refs/heads/') }}:
+        branchName: $[ variables['Build.SourceBranch'] ]
+      ${{ if startsWith(variables['Build.SourceBranch'], 'refs/pull/') }}:
+        branchName: $[ variables['System.PullRequest.SourceBranch'] ] 
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+    displayName: Build npm project
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true  
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true 
+
+      #Prepare & Build npm project
+      - template: templates/ado-node-sonarqube.yml@templates
+        parameters:
+          applicationName: $(applicationName)                                                       
+          SonarQubeApplicationKey: $(projectName)
+          SonarQubeApplicationName: $(projectName)
+          repoName: $(repoName)
+          branchName: $(branchName) 
+
+- stage: BlackDuckScan
+  dependsOn: 
+  - ReadServiceConfigStage
+  - BuildNpmWithSonar
+  displayName: BlackDuck Scan
+  jobs:
+  - job: BlackDuckScan
+    condition: eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.blackDuckScan'], 'true')
+    variables:
+      applicationName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.applicationName'] ]
+    displayName: BlackDuck scan on built project
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true  
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+  # Run the BlackDuck scan  
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Naming_Standards.yml
+        parameters:
+          ApplicationName: $(applicationName)        
+      - template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Synopsys.yml
+        parameters:
+          SnTimeOut: 2400
+          SnServiceConnection: Synopsys (BlackDuck) - tfs9dec - Token Based
+          SnDetectPolicy: ${{ parameters.blackduckViolationPolicy }}
+               
+- stage: BuildArtifact
+  dependsOn: 
+  - ReadServiceConfigStage
+  - BlackDuckScan
+  displayName: Build Artifact
+  jobs:
+  - job: BuildArtifactEC2
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true'), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.apacheServer'], 'false') )
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      repoName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.repoName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+      artifactoryPath: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryPath'] ]
+      deployOnDevEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnDevEC2'] ]
+      devBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.devBuildCommand'] ]    
+      deployOnIntEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnIntEC2'] ]
+      intBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.intBuildCommand'] ]
+      deployOnPrdEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnPrdEC2'] ]
+      prdBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.prdBuildCommand'] ]
+      deployOnDevOpsEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnDevOpsEC2'] ]
+      devOpsBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.devOpsBuildCommand'] ]
+    displayName: Build npm project for EC2 Deployment
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+
+      #Build npm project
+      - template: templates/ado-node-buildpublish.yml
+        parameters:
+          ArtifactName: $(serviceName)
+          ArtifactoryPath: $(artifactoryPath)
+          repoName: $(repoName)
+          deployOnDevEC2: $(deployOnDevEC2)
+          devBuildCommand: $(devBuildCommand)
+          deployOnIntEC2: $(deployOnIntEC2)
+          intBuildCommand: $(intBuildCommand)
+          deployOnPrdEC2: $(deployOnPrdEC2)
+          prdBuildCommand: $(prdBuildCommand)
+          deployOnDevOpsEC2: $(deployOnDevOpsEC2)
+          devOpsBuildCommand: $(devOpsBuildCommand)
+          SharedInfra: ${{ parameters.sharedInfra }}
+          
+  - job: BuildArtifactApacheEC2  
+    condition: and( eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.buildForEC2'], 'true'), eq( stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.apacheServer'], 'true') )
+    variables:
+      solution: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.solution'] ]
+      buildConfiguration: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.buildConfiguration'] ]
+      testPlatform: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.testPlatform'] ]
+      serviceName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.service.serviceName'] ]
+      repoName: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.repoName'] ]
+      vaultAgent: ${{ parameters.vaultAgent }}
+      publishWebProjects: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.publishWebProjects'] ]
+      branchType: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.branch'] ] 
+      artifactoryParentFolder: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryParentFolder'] ]
+      artifactoryPath: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.param.artifactoryPath'] ]
+      deployOnDevEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnDevEC2'] ]
+      devBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.devBuildCommand'] ]    
+      deployOnIntEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnIntEC2'] ]
+      intBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.intBuildCommand'] ]
+      deployOnPrdEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnPrdEC2'] ]
+      prdBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.prdBuildCommand'] ]
+      deployOnDevOpsEC2: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.deployOnDevOpsEC2'] ]
+      devOpsBuildCommand: $[ stageDependencies.ReadServiceConfigStage.ReadServiceConfig.outputs['sc.pipeline.devOpsBuildCommand'] ]      
+    displayName: Build npm project for EC2 Deployment Apache
+    steps:
+      - checkout: self
+        path: .\s\user-service-repo
+        clean: true
+      - checkout: templates
+        path: .\s\main-pipeline-repo
+        clean: true
+
+      #Build npm project
+      - template: templates/ado-node-buildpublish-apache.yml
+        parameters:
+          ArtifactName: $(serviceName)
+          ArtifactoryPath: $(artifactoryPath)
+          repoName: $(repoName)
+          deployOnDevEC2: $(deployOnDevEC2)
+          devBuildCommand: $(devBuildCommand)
+          deployOnIntEC2: $(deployOnIntEC2)
+          intBuildCommand: $(intBuildCommand)
+          deployOnPrdEC2: $(deployOnPrdEC2)
+          prdBuildCommand: $(prdBuildCommand)
+          deployOnDevOpsEC2: $(deployOnDevOpsEC2)
+          devOpsBuildCommand: $(devOpsBuildCommand)
+          SharedInfra: ${{ parameters.sharedInfra }}

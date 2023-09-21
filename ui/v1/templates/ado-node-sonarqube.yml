@@ -1,0 +1,53 @@
+parameters:
+- name: SonarQubeApplicationKey
+  type: string
+
+- name: SonarQubeApplicationName
+  type: string
+  
+steps:    
+- checkout: self      
+  persistCredentials: true
+  clean: true
+
+- task: SonarQubePrepare@4
+  inputs:
+    SonarQube: 'SonarQube - tfs9dec - Token Based'
+    scannerMode: 'CLI'
+    configMode: 'manual'
+    cliProjectKey: ${{ parameters.SonarQubeApplicationKey }}
+    cliProjectName: ${{ parameters.SonarQubeApplicationName }}
+    cliSources: '.'
+    extraProperties: |
+      # Additional properties that will be passed to the scanner, 
+      # Put one key=value per line, example
+      sonar.exclusions=DevOps/**/*,**/.jfrog/**/*,**/coverage/**/*,**/*.spec.ts,./.scannerwork/**/*,**/node_modules/*, **/build/*, **/helm/**/*
+      sonar.test.exclusions=test/**/*
+  displayName: 'SonarQube scan' 
+
+- task: NodeTool@0 
+  displayName: 'Install Node.js 16.13.x' 
+  inputs:  
+    versionSpec: '16.13.x'
+        
+- task: ArtifactoryNpm@2  
+  displayName: 'npm install'  
+  inputs:       
+    command: 'install'
+    artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+    sourceRepo: 'libs-npm'
+    workingFolder: './'
+
+- task: Npm@1  
+  displayName: Build  
+  inputs:
+    command: 'custom'
+    customCommand: 'run build'
+    workingDir: './'
+
+- task: SonarQubeAnalyze@4
+  displayName: 'SonarQube Run Code Analysis'
+
+
+
+

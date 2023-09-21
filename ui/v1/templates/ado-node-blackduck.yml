@@ -1,0 +1,41 @@
+parameters:
+- name: BlackDuckProjectName
+  type: string
+  
+steps:    
+- checkout: self      
+  persistCredentials: true
+  clean: true
+
+- task: NodeTool@0 
+  displayName: 'Install Node.js 16.13.x' 
+  inputs:  
+    versionSpec: '16.13.x'
+        
+- task: ArtifactoryNpm@2  
+  displayName: 'npm install'  
+  inputs:       
+    command: 'install'
+    artifactoryService: 'Artifactory-GlobalPlatformServices-reader'
+    sourceRepo: 'libs-npm'
+    workingFolder: './'
+
+- task: Npm@1  
+  displayName: Build  
+  inputs:
+    command: 'custom'
+    customCommand: 'run build'
+    workingDir: './'
+
+- task: PowerShell@2
+  inputs:
+    targetType: 'inline'
+    script: |
+      $serviceProjectName = "${{ parameters.BlackDuckProjectName }}"
+      Write-Host "##vso[task.setvariable variable=svcProjectName]$serviceProjectName"          
+      Write-Host "Service Project Name : $serviceProjectName" 
+
+- template: ${{variables['System.DefaultWorkingDirectory']}}/devops-template/Synopsys.yml
+  parameters:
+    SnTimeOut: 900    
+    SnServiceConnection: Synopsys (BlackDuck) - tfs9dec - Token Based

@@ -1,0 +1,48 @@
+parameters:
+  - name: testPlatform
+    default: 'linux-x64'
+  - name: solution
+    default: ''
+
+steps:
+- template: dotnet-framework-install.yaml
+
+# - task: NuGetToolInstaller@1 # Optional if nuget.exe >= 4.8.5385 is already on the path  # Recommended by DevTool not to use as it is causing issue since VS2022 is not installed in build servers
+#   inputs:
+#     versionSpec: '*'
+#     checkLatest: true
+
+#- script: dotnet nuget locals all --clear
+
+#- script: dotnet nuget locals global-packages -c
+
+#- script: dotnet nuget locals temp -c
+
+# - task: ArtifactoryNuGet@2             # Recommended by DevTool not to use as it is causing issue since VS2022 is not installed in build servers
+#   displayName: 'nuget restore'
+#   inputs:
+#       command: 'restore'
+#       artifactoryService: 'Artifactory_GPS_BasicAuth'
+#       targetResolveRepo: 'nuget'
+#       solutionPath: '**/*.sln'
+#       noNuGetCache: true
+#       collectBuildInfo: true
+#       buildName: '$(Build.DefinitionName)'
+#       buildNumber: '$(Build.BuildNumber)'
+#       includeEnvVars: true
+
+- task: DotNetCoreCLI@2
+  displayName: 'Nuget restore'
+  inputs:
+    command: 'restore'
+    projects: '$(solution)'
+    feedsToUse: 'config'
+    nugetConfigPath: 'user-service-repo/Nuget.config'
+    externalFeedCredentials: 'ArtifactoryNugetConnection'
+    #externalFeedCredentials: 'Artifactory-NuGet-Deployer'
+    noCache: true
+
+- task: NuGetAuthenticate@0
+  inputs:
+    nuGetServiceConnections: 'ArtifactoryNugetConnection'
+- task: UseDotNet@2

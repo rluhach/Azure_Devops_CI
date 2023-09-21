@@ -1,0 +1,12 @@
+parameters:
+  branchName: ''
+  pullRequestId: ''
+#Extract SonarQube Result 
+steps:           
+  - task: PowerShell@2
+    displayName: Extract SonarQube Result
+    inputs:
+      targetType: 'filePath'
+      filePath: $(System.DefaultWorkingDirectory)\main-pipeline-repo\services\v1.3\scripts\extract-sonar-quality-gate-status.ps1         
+      arguments: >
+        -sqprojectname "$(svcProjectName)" -branchName "$(branchName)" -pullRequestId "$(pullRequestId)"

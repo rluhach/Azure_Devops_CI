@@ -1,0 +1,10 @@
+parameters:
+  - name: packageOutputPath
+    default: ''
+
+steps:
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact'
+      inputs:
+        PathtoPublish: '$(packageOutputPath)'
+        artifact: 'airflow_package'

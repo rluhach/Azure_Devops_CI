@@ -1,0 +1,55 @@
+parameters:
+- name: checkmarxThreshold
+  type: string 
+  # default: OFF  
+
+steps:
+  - task: InlinePowershell@1      
+    displayName: Set Checkmarx threshold
+    inputs:
+      Script:
+        param($cxThresholdValue, [string]$cxHigh, [string]$cxMedium, [string]$cxLow)          
+        switch ($cxThresholdValue)
+        {
+            OFF
+            {    
+              $cxHigh = '';
+              $cxMedium = '';
+              $cxLow = '';              
+              Write-Host "Enforcement disabled!"; 
+              Break 
+            }
+            LENIENT 
+            {
+              $cxHigh = 0;
+              $cxMedium = '';
+              $cxLow = '';  
+              Write-Host "LOW enforcement enabled!"; 
+              Break
+            }
+            MODERATE 
+            {
+              $cxHigh = 0;
+              $cxMedium = 0;
+              $cxLow = ''; 
+              Write-Host "MODERATE enforcement enabled!"; 
+              Break
+            }
+            STRICT 
+            {
+              $cxHigh = 0;
+              $cxMedium = 0;
+              $cxLow = 0;
+              Write-Host "STRICT enforcement enabled!"; 
+              Break
+            }
+        }
+        Write-Host "##vso[task.setvariable variable=CxHigh]$cxHigh";
+        Write-Host "##vso[task.setvariable variable=CxMedium]$cxMedium";
+        Write-Host "##vso[task.setvariable variable=CxLow]$cxLow";
+        Write-Host "checkmarxThresholdValue - $cxThresholdValue";
+        Write-Host "cxHigh - $cxHigh";
+        Write-Host "cxMedium - $cxMedium";
+        Write-Host "cxLow - $cxLow";        
+        Write-Host "##vso[task.logissue type=warning]Checkmarx Dependency Scan will be implemented soon in 2023. This might break your build if your application is referencing any TUNuget packages and does not have its source code in Artifactory. For more details please visit https://wiki.transunion.com/pages/viewpage.action?pageId=332078061"
+      ScriptArguments: '-cxThresholdValue ${{ parameters.checkmarxThreshold}} -cxHigh "''" -cxMedium "''" -cxLow "''" '

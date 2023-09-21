@@ -1,0 +1,162 @@
+parameters:
+- name: CxOverrideFullScan
+  type: boolean 
+  
+
+steps:
+  - task: InlinePowershell@1
+    displayName: 'Set Checkmarx Variables'
+    inputs:
+      Script: |
+        param($ApplicationName, $SourceBranch, $SourceVersion, $RepoProvider, $Region, $OverrideFullScan)
+        
+        if( [string]::IsNullOrEmpty($ApplicationName) -or [string]::IsNullOrEmpty($SourceBranch) -or [string]::IsNullOrEmpty($SourceVersion) -or [string]::IsNullOrEmpty($RepoProvider) -or [string]::IsNullOrEmpty($Region))
+        {
+            Write-Error "One or more params are null or empty. ApplicationName=$ApplicationName, SourceBranch=$SourceBranch, SourceVersion=$SourceVersion, RepoProvider=$RepoProvider, Region=$Region."
+            exit 1
+        }
+        
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12;
+        
+        function ComposeComment
+        {
+            if($RepoProvider -eq 'TfsGit')
+            {
+                if($SourceBranch.StartsWith("refs/heads"))
+                {
+                    $comment = -join("Branch: ", $SourceBranch.Replace("refs/heads",""))
+                }
+                elseif($SourceBranch.StartsWith("refs/pull"))
+                {
+                    $comment = -join("Pull Request: ", $SourceBranch.Replace("refs/pull",""))
+                }
+                elseif($SourceBranch.StartsWith("refs/tags"))
+                {
+                    $comment = -join("Tag Name: ", $SourceBranch.Replace("refs/tags",""))
+                }
+        
+            }
+            else
+            {
+                Write-Warning "This is NOT a TFS Git Repository."
+                if($SourceBranch.Contains(","))
+                {
+                    $comment = -join("Build triggered in TFVC by: ", $SourceBranch)
+                }
+                else
+                {
+                    $comment = -join("TFVC Branch Name: ", $SourceBranch)
+                }
+            }
+            return (-join($comment, " | Commit/Changeset ID: ", $SourceVersion))
+        }
+        
+        function Set-CheckMarxVariables
+        {
+            $comment = ComposeComment -SourceBranch $SourceBranch -SourceVersion $SourceVersion
+            $scanType = 'full'
+            $fullScan = 'true'            
+            $projectName = $ApplicationName
+        
+            # Set project name as <ApplicationName>-<branch name> only for 'master' and 'sast' branch names in TFS Git
+            if($RepoProvider -eq 'TfsGit')
+            {
+                if($SourceBranch.StartsWith("refs/heads"))
+                {
+                    $branchFolders = $SourceBranch.Split('/')
+                    $leaf = $branchFolders[-1]
+                    if($OverrideFullScan -eq "true")
+                    {
+                      $incScan = 'false'
+                      $projectName = -join($ApplicationName, '_', $leaf)
+                      $scanType = 'full'
+                    }
+                    elseif(($OverrideFullScan -eq "false") -and (( $leaf -eq "sast" ) -or 
+                    ($leaf -eq "master" ) -or ($leaf -Like "dev*") -or ($leaf -eq "main")))
+                    {
+                      $incScan = 'false'
+                      $projectName = -join($ApplicationName, '_', $leaf)
+                      $scanType = 'full'
+                      Write-Warning "Cannot run incremental scan for this $leaf branch. Running a full scan."
+                    }
+                    elseif($OverrideFullScan -eq "false")
+                    {
+                      $projectName = -join($ApplicationName, '_', "TEMP")
+                      $scanType = 'incremental'
+                      $incScan = 'true'
+                      $fullScan = 'false'    
+                    }
+                    $BranchName = 'TEMP'
+                    switch -Wildcard ($leaf.ToLower())
+                    {
+                        master
+                        {    
+                          $BranchName = 'PRODUCTION';                                         
+                          Break 
+                        }
+                        main
+                        {    
+                          $BranchName = 'PRODUCTION';
+                          Break 
+                        }
+                        develop
+                        {    
+                          $BranchName = 'LATEST';             
+                          Break 
+                        }
+                        '*dev*'
+                        {    
+                          $BranchName = 'LATEST';
+                          Break 
+                        }            
+                        '*feature*'
+                        {
+                          $BranchName = 'TEMP';
+                          Break 
+                        }
+                        '*PR-*' 
+                        {
+                          $BranchName = 'TEMP';
+                          Break 
+                        }
+                        '*bugfix*' 
+                        {
+                          $BranchName = 'TEMP';
+                          Break
+                        }
+                        '*hotfix*' 
+                        {
+                          $BranchName = 'TEMP';
+                          Break
+                        }
+                        '*release*'
+                        {
+                          $BranchName = 'STAGE';
+                          Break
+                        }
+                        '*sast*'
+                        {
+                          $BranchName = 'SAST';
+                          Break
+                        }                      
+                    }
+                    Write-Host "BranchName = $BranchName";
+                }
+            }
+                    
+            Write-Host "##vso[task.setvariable variable=CxComment]$comment"
+            Write-Host "##vso[task.setvariable variable=CxScanType]$scanType"
+            Write-Host "##vso[task.setvariable variable=CxincScan]$incScan"
+            Write-Host "##vso[task.setvariable variable=CxfullScan]$fullScan"
+            Write-Host "##vso[task.setvariable variable=CxBranchName]$BranchName"
+        
+            Write-Host "CheckMarx Scan Type - $scanType"
+            Write-Host "CheckMarx Comment - $comment"
+            Write-Host "CheckMarx IncScan - $incScan"
+            Write-Host "CheckMarx FullScan - $fullScan"
+            Write-Host "Checkmarx OverrideToFullScan - $OverrideFullScan "
+        }
+        
+        Set-CheckMarxVariables
+      ScriptArguments: '-SourceBranch "$(Build.SourceBranch)" -SourceVersion $(Build.SourceVersion) -ApplicationName $(svcProjectName) -RepoProvider $(Build.Repository.Provider) -Region $(CxRegion) -OverrideFullScan ${{ parameters.CxOverrideFullScan}}'
+

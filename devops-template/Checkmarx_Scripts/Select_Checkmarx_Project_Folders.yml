@@ -1,0 +1,53 @@
+parameters:
+- name: CxSolutionpath
+  type: string
+  # default: 
+
+steps:
+  - task: InlinePowershell@1
+    displayName: 'Select Checkmarx Project folders'
+    inputs:
+      Script: |
+        param([string]$SolutionPath, [string]$SourcesDir)
+        if(-not [string]::IsNullOrEmpty($SolutionPath) -and $SolutionPath -ne 'NoSolutionFile' -or $SoultionPath -eq $null)
+        {
+          if($SolutionPath -eq '')
+          {
+              Write-Host "SolutionPath = $SolutionPath"
+              Write-Host "##vso[task.setvariable variable=CxSolutionPath]$SolutionPath"   
+              Write-Host "##vso[task.setvariable variable=CxIncludes]$SolutionPath" 
+          }
+          else
+          {
+            $CSolutionPath = "$SolutionPath"
+            $SolutionPath = "$SourcesDir\$SolutionPath"
+            if(-not (Test-Path $SolutionPath))
+            {
+                Write-Error "Failed to find $SolutionPath to perform Checkmarx scan!"
+                exit -1
+            }
+            $result = 
+            (
+             Get-Content $SolutionPath | 
+             Select-String 'Project\(' |
+             ForEach-Object {
+                 ($_ -Split '[,=]')[2] | 
+                 Where-Object { $_.Contains('\') } | 
+                 ForEach-Object {
+                     $folders = ($_.Trim('[ "{}]')) -Split '\\' |
+                     Where-Object {
+                         $_ -ne '..'
+                     }
+                 (($folders[0..($folders.Count - 2)]) -join '/') + '/**'
+               };
+             }
+            ) -join ', '
+            Write-Host "##vso[task.setvariable variable=CxIncludes;]$result";
+            Write-Host "##vso[task.setvariable variable=CxSolutionpath;]$CSolutionPath";            
+            Write-Host "CxIncludes - $result"
+            Write-Host "CxSolutionPath - $CSolutionPath"
+          }
+        }
+      ScriptArguments: '-SourcesDir $(Build.SourcesDirectory) -SolutionPath ${{parameters.CxSolutionpath}}'
+
+

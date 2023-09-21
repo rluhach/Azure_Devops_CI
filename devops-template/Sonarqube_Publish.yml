@@ -1,0 +1,130 @@
+steps:
+  - task: SonarQubePublish@4
+    displayName: 'SonarQube Publish'
+    inputs:
+      pollingTimeoutSec: '300'
+
+  - task: PowerShell@2
+    displayName: 'SonarQube - Quality Gate Notification'    
+    inputs:       
+      targetType: 'inline'
+      script: |
+        $requestor = $env:BUILD_REQUESTEDFOR      
+        If($requestor -Like "*tfs9*")
+        {Write-Host "Requestor is $requestor hence no notification sent"  }
+        else{ 
+        Write-Host "Requestor $requestor"   
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $token = [System.Text.Encoding]::UTF8.GetBytes("b384c760469288c90b666827016a6d0ab80c0d4a" + ":")
+        #Converting the token to Base64 String
+        $base64 = [System.Convert]::ToBase64String($token)
+        $basicAuth = [string]::Format("Basic {0}", $base64)  
+        $branchSource = $env:BUILD_SOURCEBRANCH
+        $branch = $branchSource -replace "refs/heads/", "" 
+        Write-Host "Branch $branch"   
+        Write-Host "Sonar Project Name $(svcProjectName)"   
+        $qualityProfileurl = "https://sonar.transunion.com/api/qualitygates/get_by_project?project=$(svcProjectName)"
+        $Headers = @{
+            Authorization = $basicAuth
+        }
+        $qualityProfile = Invoke-restmethod -Uri $qualityProfileurl -Headers $Headers
+        $profile = $qualityProfile.qualityGate.name
+        $sonarNotify = "Yes"
+        #$sonarGateEnforce = "Yes"  
+        Write-Host "sonarNotify is $sonarNotify"
+        #Write-Host "sonarGateEnforce is $sonarGateEnforce"
+        Write-Host "QualityGate Profile set is $profile"
+        if($profile -eq "TU way")
+        {
+        Write-Host "##[error]Kindly update SonarQube Quality Gate for $(svcProjectName) project since it's set under $profile Quality Gate"  
+        $MsgBody = @"
+        <STYLE>
+          BODY, TABLE, TD, TH, P {
+            font-family: 'Source Sans Pro';
+            font-size: 14px;
+            color: black;
+            background-color: #d8dbdc;
+          }
+          .section {
+            width: 100%;
+            border:2px solid #00A6CA;
+          }
+          .td-title-main {
+            color: white;
+            font-size: 200%;
+            text-align: center;
+            font-weight: bold;
+            background-color: #00A6CA;
+          }
+          .td-title {
+            color: black;
+            font-size: 80%;
+            font-weight: bold;
+            padding-left: 5px;
+            text-align: left;
+            text-transform: uppercase;
+            vertical-align: top;
+            width: 20%;
+            border-style:none;
+            background-color: #d8dbdc;
+          }
+          .tr-title {
+            border-style:none;
+            background-color: #d8dbdc;
+          }
+          .td-content {
+            color: black;
+            text-align:left;
+            vertical-align: top;
+            border-style:none;
+            background-color: #d8dbdc;
+          }
+        </STYLE>
+        <BODY>
+          <!-- BUILD RESULT -->
+          <table class="section">
+            <tr class="tr-title">
+              <td class="td-title-main" colspan=2>
+                Sonar Gate Failed
+              </td>
+            </tr>
+          <tr>
+              <td class="td-title">Sonar Project:</td>
+              <td class="td-content">$(svcProjectName)</td>
+            </tr>
+          <tr>
+              <td class="td-title">SONAR URL:</td>
+              <td class="td-content"><A href="https://sonar.transunion.com/dashboard?branch=${branch}&id=$(svcProjectName)">https://sonar.transunion.com/dashboard?branch=${branch}&id=$(svcProjectName)</A></td>
+            </tr>
+          <tr>
+              <td class="td-title">Azure DevOps Project:</td>
+              <td class="td-content">$(System.TeamProject) || Build Number #$(Build.BuildNumber) </td>
+            </tr>
+          <tr>
+              <td class="td-title">Azure DevOps Build URL:</td>
+              <td class="td-content"><A href="$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&_a=summary">$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&_a=summary</A></td>
+            </tr>
+          </table>
+          <br/>
+          <table class="section">
+            <tr class="tr-title">
+              <td class="td-title-main" colspan=2>
+                Advisory
+              </td>
+            </tr>
+          <tr>
+          <tr>
+              <td class="td-content"><p>Sonar Gate failures will start breaking builds and block code deployments starting Jan 1 of 2023 for Quality Gate - Level 1. 
+            Please refer to wiki page <a href="https://wiki.transunion.com/display/DT/Process+to+update+SonarQube+Quality+Gate">Process to update Sonar Quality Gate</a> to check your project's current Quality Gate and update it to Level I or above ( Level II , Level III ). The "TU way" Quality Gate will be retired by Oct of 2022.</p></td>
+            </tr>
+          </table>
+        </BODY>
+        "@
+        if($sonarNotify -eq 'Yes') 
+            {
+            $anonUsername = "anonymous"
+            $anonPassword = ConvertTo-SecureString -String "anonymous" -AsPlainText -Force
+            $anonCredentials = New-Object System.Management.Automation.PSCredential($anonUsername,$anonPassword)
+            Send-MailMessage -From 'tfs9appl@transunion.com' -To $(Build.RequestedForEmail) -Subject "Kindly update SonarQube Quality Gate for $(svcProjectName) project since it's set under $profile Quality Gate" -Body $MsgBody -SmtpServer 'smtpcorp.transunion.com' -BodyAsHtml -credential $anonCredentials}
+        }
+        }   

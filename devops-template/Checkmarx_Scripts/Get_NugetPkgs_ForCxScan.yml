@@ -1,0 +1,160 @@
+parameters:
+
+- name: CxProjectPath
+  type: string 
+
+
+steps:
+  - task: InlinePowershell@1
+    displayName: 'Retrieve Nuget Packages source code'
+    inputs:
+      Script: |  
+        param ($sourcesDir, $slnPathFromRepoRoot='')
+     
+        Write-Host "#1. Get installed packages in $sourcesDir"
+        try
+        {    
+            $pkgsFolders = @()
+            $repository = "$sourcesDir\$env:BUILD_REPOSITORY_NAME"
+            Write-Host " Entire repo folder $repository"
+            #if condition is needed to check if the Repo folder is available or not since some pipeline they dont specify checkout.
+            #And reason for using Repo folder to check packages folder is, in .Net core pipeline packages folder is created along with repo folder and hence to avoid the confusion in logic it is added.
+            if (Test-Path -Path $repository) 
+            {
+                "Repo path $repository available"
+                Get-ChildItem $repository -include 'packages' –recurse -directory | % {
+                $pkgsFolders += $_.FullName
+                }
+            }
+            else 
+            {
+                "Repo path $repository not available"
+                Get-ChildItem $sourcesDir -include 'packages' –recurse -directory | % {
+                $pkgsFolders += $_.FullName
+                }
+            }            
+            $pkgsArr = @()
+            #if packages.config in use
+            if($pkgsFolders.Count -ne 0)
+            {
+                Write-Host " package folder $pkgsFolders"        
+            }
+        }
+        catch{
+            Write-Output "Error in #1. Get installed packages in $sourcesDir .Error in fetching from packages.config section"
+            Write-Output $_
+            exit 1;
+        }
+
+
+        #Checking if Packages.config exists since in .Net pipeline the packages folder if not available it goes to .NetCore logic. 
+        $package = (Get-ChildItem -Path $sourcesDir -Filter "packages.config" -Recurse -ErrorAction SilentlyContinue -Force).Count -gt 0
+        if ($package -eq "True")
+        {"packages.config exist"}
+        else {"packages.config does not exist"}
+
+        #check for packageReferences if no packages were found installed using packages.config
+        try
+        {
+            if((Get-ChildItem $sourcesDir -Recurse -Filter *.sln).Count -ne 0)
+            {
+                if(($pkgsFolders.Count -eq 0) -and ($package -ne "True"))
+                {           
+                    if([string]::IsNullOrEmpty($slnPathFromRepoRoot))
+                    {
+                        $list = Get-ChildItem $sourcesDir -Recurse -Filter *.sln
+                        $solutionFile = $list[0].FullName
+                    }
+                    else
+                    {
+                        $solutionFile = "$sourcesDir\$slnPathFromRepoRoot"
+                    }
+                    $pkgrefs = dotnet list $solutionFile package --include-transitive    
+                    $col = 3
+                    $pkgsVer = @()
+                    $pkgrefs |% {
+                        $pkg = $_.TrimStart()        
+                        if($pkg.StartsWith('Transitive Package'))
+                        {
+                            $col = 2
+                        }
+                        if($pkg.StartsWith('> '))
+                        {   
+                            $pkg = $pkg -replace '\s+', ' '
+                            #$pkg = $pkg -replace '(A)', ''
+                            $parts = $pkg.Split(' ')
+                            $pkg = $parts[1]
+                            $pkgsArr += $pkg
+                            $pkgsVer += $parts[2]
+                        }
+                    }
+                    Write-Host "Packages installed during build:"
+                    $pkgsArr | % {$_}
+                        
+                        $Folder = 'E:\.nuget'
+                        if (Test-Path -Path $sourcesDir/packages) 
+                        {
+                            Remove-Item $sourcesDir/packages -Recurse
+                            "Existing packages folder removed"
+                            New-Item -Path $sourcesDir -Name "packages" -ItemType "directory"
+                            "Packages folder created"
+                        }
+                        else 
+                        {
+                            New-Item -Path $sourcesDir -Name "packages" -ItemType "directory"
+                            "Packages folder created"
+                        }
+                        if (Test-Path -Path $Folder) 
+                        {
+                            "Path exists!"                
+                            $pkgfolders = Get-ChildItem -Path $Folder -Name  
+                            $pkgfolders = $pkgfolders.ToUpper();
+                            $pkgsArr = $pkgsArr.ToUpper();
+                            
+                            foreach ($lib in $pkgfolders)
+                                {
+                                    "Package: $lib"                       
+                                    for($i=0;$i -lt $pkgsArr.Length; $i++)
+                                    {
+                                    if(($lib) -eq ($pkgsArr[$i]))
+                                            {   
+                                                "Matching $lib"
+                                                $lib = $lib.tolower();
+                                                $dir = "$folder\$lib" 
+                                                $hasVersion = (Get-ChildItem -Path $dir -Directory –Recurse -Filter $pkgsVer[$i]).Count -gt 0                                         
+                                                $directory = "$dir\$($pkgsVer[$i])"                                        
+                                                if ($hasVersion -eq "True")
+                                                    {                                                              
+                                                        $hasSrc = (Get-ChildItem -Path "$directory" -Directory –Recurse -Filter "src").Count -gt 0
+                                                        if ($hasSrc -eq "True")
+                                                        {                                                              
+                                                            Copy-Item -Path $dir -Destination "$sourcesDir\packages" -PassThru -Recurse
+                                                        }
+                                                        else{"No source folder"}
+                                                    }
+                                                    else{"Version did not match"}                                     
+                                                
+                                                break;
+                                            }                                
+                                            
+                                                
+                                    }
+                                }
+                        }
+
+                        else 
+                        {
+                                "Path doesn't exist."
+                        }   
+                }
+            }
+            else {"No .sln file found"}
+        }
+        catch{
+            Write-Output "Error in #1. Get installed packages in $sourcesDir .Error in fetching from packageReferences section"
+            Write-Output $_
+            exit 1;
+        }  
+
+      ScriptArguments: '-sourcesDir $(Build.SourcesDirectory) -slnPathFromRepoRoot ${{ parameters.CxProjectPath }} '
+

@@ -1,0 +1,39 @@
+parameters:
+
+- name: SqServiceConnection
+  type: string 
+  default: 'NULL'
+
+- name: Configfile
+  type: string
+  default: sonar-project.properties
+
+- name: SonarExclusions
+  type: string
+  default: ''  
+
+#Will be needed in the future when Gating has to be enabled
+# - name: SqQualityGate
+#   type: string 
+#   default: 'true'
+#   values:
+#       - 'false'
+#       - 'true'
+
+steps:
+  - task: SonarQubePrepare@4
+    displayName: 'SonarQube Prepare Analysis'
+    inputs:
+      SonarQube: ${{ parameters.SqServiceConnection}}
+      scannerMode: 'CLI'
+      configMode: 'manual'
+      cliprojectKey: '$(svcProjectName)'
+      cliprojectName: '$(svcProjectName)'
+      cliSources: '.'
+      configFile: ${{ parameters.Configfile}}
+      extraProperties: 
+       sonar.exclusions=${{ parameters.SonarExclusions}}
+      #Will be needed in the future when Gating has to be enabled
+      # extraProperties: |
+      #   sonar.qualitygate.wait=${{ parameters.SqQualityGate}}
+      #   sonar.qualitygate.timeout=900

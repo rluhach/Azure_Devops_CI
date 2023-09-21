@@ -1,0 +1,269 @@
+parameters:
+- name: blackduckThreshold
+  type: string 
+  # default: OFF  
+
+- name: SnDetectTools
+  type: string 
+  # default: DETECTOR
+
+
+steps:
+  - task: InlinePowershell@1
+    displayName: 'Extract Blackduck Results & Threshold'
+    inputs:
+      Script: |  
+        param($bdThreshold,$detectTools)
+        try{
+        Write-Host $detectTools.ToUpper()
+        Start-Sleep -m 15000
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+        $Token='M2NiYjY2MWQtMWFiNi00ODVhLWI3MjctYzM5YTBjMGMxN2M1OjU4MTIxYTAyLWYyMTYtNGNhNS05MDJmLTBmZGUwMDU4OTVjNQ=='
+        $authHeaders = @{'Authorization' = "token ${Token}"}
+        $responseBody = Invoke-RestMethod -Method Post -Uri "https://blackduck.aws.transunion.com/api/tokens/authenticate" -Headers $authHeaders  
+        $bearerToken = $responseBody.bearerToken 
+        $invocationHeaders = @{'Cookie'= "AUTHORIZATION_BEARER=$($responseBody.bearerToken)" }
+        $authBearerHeaders = @{'Authorization' = "Bearer $bearerToken"}
+
+        Write-Host $(svcProjectName)
+        $url="https://blackduck.aws.transunion.com/api/projects?q=name:"+"$(svcProjectName)"
+        Write-Host $url
+
+        $projectInfo = Invoke-restmethod -Uri $url -Headers $authBearerHeaders
+
+        Write-Output "==========VersionUrl=============="
+        $projectidUrl= $projectInfo.items[0]._meta.href+"/versions?q=versionName:"+"$(SnVersionName)"
+        Write-Output $projectidUrl
+
+        $projectIDInfo= Invoke-restmethod -Uri $projectidUrl -Headers $authBearerHeaders
+
+        Write-Output "==========Codelocation=============="
+        $projectcodelocation= $projectIDInfo.items[0]._meta.href+"/codelocations"
+        Write-Output $projectcodelocation
+        $projectcodelocationInfo= Invoke-restmethod -Uri $projectcodelocation -Headers $authBearerHeaders
+
+        Write-Output "==========CodeLocationScanSummary=============="
+        $projectcodelocationScanSummary= $projectcodelocationInfo.items[0].name
+        $length = $projectcodelocationScanSummary.length
+        $result = $projectcodelocationScanSummary.substring($length -4)
+        $BomResult = $null;
+        $ScanResult = $null;
+        #Get the first  bom and scan upload which will come to the top. 
+        For ($i=0; $i -le 1; $i++) {
+          $projectcodelocationScanSummary= $projectcodelocationInfo.items[$i].name
+          if($projectcodelocationScanSummary -ne $null)
+          {
+          $length = $projectcodelocationScanSummary.length
+          $result = $projectcodelocationScanSummary.substring($length -4)
+          #if the result is identified as Bom enter this loop . 
+          if($result -eq " bom"){
+            Write-Host $projectcodelocationScanSummary
+            For ($j=0; $j -le 3; $j++){
+              $projectcodelocationScanStatus= $projectcodelocationInfo.items[$i].status[$j].operationNameCode
+              $projectUpdatedTime= $projectcodelocationInfo.items[$i].updatedAt
+              if($projectcodelocationScanStatus -eq "ServerScanning"){
+                $projectScanStatus= $projectcodelocationInfo.items[$i].status[$j].status        
+                $Count = 0;       
+                #Check if scan status is completed. If completed get the scan date and time.
+              do 
+              {
+                $projectcodelocationInfo = Invoke-restmethod -Uri $projectcodelocation -Headers $authBearerHeaders
+                $projectScanStatus= $projectcodelocationInfo.items[$i].status[$j].status 
+                if($projectScanStatus -eq "COMPLETED" ){
+                Write-Host ("$projectcodelocationScanSummary status is $projectScanStatus")
+                do 
+                {
+                  $BDScanStartDateTime = "$(SnScanStartDateTime)".replace('/','-')
+                  Write-Host "BD Scan starting Date Time = $BDScanStartDateTime"; 
+                  $projectUpdatedTime= $projectcodelocationInfo.items[$i].updatedAt
+                  $ScanDateTime = ($projectUpdatedTime.replace('T',' ').replace('Z','')).ToString();       
+                  $ScanDateTime = $ScanDateTime.Substring(0,$ScanDateTime.Length-4);
+                  Write-Host "Scan ending Date Time = $ScanDateTime"; 
+                  $ScanDateTime = [datetime]::ParseExact("$ScanDateTime", 'yyyy-MM-dd HH:mm:ss', $null)
+                  $BDScanStartDateTime = [datetime]::ParseExact("$BDScanStartDateTime", 'yyyy-MM-dd HH:mm:ss', $null)
+                  
+                  if ($ScanDateTime -ge $BDScanStartDateTime) {
+                    # Write-Host("$ScanDateTime vs $BDScanStartDateTime")
+                    Write-Host ("Scan completed time is greater than starting time")
+                    $BomResult = "True"
+                  }
+                  else {
+                    write-output "Blackduck Scan StartDateTime is greater . Scan completed time is before the scan start time"
+                    $Count = $Count + 1;
+                    Start-Sleep -m 15000            
+                    Write-Host ("Retrying Count = $Count")
+                    $BomResult = "False"
+                  }        
+                } until (($BomResult -eq "True" ) -or ($Count -eq 3))                        
+                } 
+                else {
+                  write-output "$projectcodelocationScanSummary status is $projectScanStatus"
+                  $Count = $Count + 1;
+                  Start-Sleep -m 40000          
+                  Write-Host ("Retrying Count = $Count")          
+                }
+              } until (($projectScanStatus -eq "COMPLETED" ) -or ($Count -eq 3))        
+              }
+            }
+          }elseif(($result -eq "scan") -and ($detectTools.ToUpper() -like "SIGNATURE_SCAN")){
+            For ($j=0; $j -le 3; $j++){
+            $projectcodelocationScanStatus= $projectcodelocationInfo.items[$i].status[$j].operationNameCode
+            $projectUpdatedTime= $projectcodelocationInfo.items[$i].updatedAt
+            if($projectcodelocationScanStatus -eq "ServerScanning"){
+              $projectScanStatus= $projectcodelocationInfo.items[$i].status[$j].status      
+              $Count = 0;       
+                #Check if scan status is completed. If completed get the scan date and time.
+                #This do will check if the project scan status is complete . 
+                #Insome cases it comes in-progress and skips the entire logic so added this do condition 
+                #invoke web request method is added if not  it will not provide the latest status if the first status came as in-progress
+              do 
+              {
+                $projectcodelocationInfo = Invoke-restmethod -Uri $projectcodelocation -Headers $authBearerHeaders
+                $projectScanStatus= $projectcodelocationInfo.items[$i].status[$j].status 
+                if($projectScanStatus  -eq "COMPLETED" ){
+                Write-Host ("$projectcodelocationScanSummary status is $projectScanStatus")
+                # in some cases the scan project doesnt get updated or it will show the last completed 
+                # scan project date and time . so to double check it use this do and timer.
+                do 
+                {
+                  $BDScanStartDateTime = "$(SnScanStartDateTime)".replace('/','-')
+                  Write-Host "BD Scan starting Date Time = $BDScanStartDateTime"; 
+                  $projectUpdatedTime= $projectcodelocationInfo.items[$i].updatedAt
+                  $ScanDateTime = ($projectUpdatedTime.replace('T',' ').replace('Z','')).ToString();       
+                  $ScanDateTime = $ScanDateTime.Substring(0,$ScanDateTime.Length-4);
+                  Write-Host "Scan ending Date Time = $ScanDateTime"; 
+                  $ScanDateTime = [datetime]::ParseExact("$ScanDateTime", 'yyyy-MM-dd HH:mm:ss', $null)
+                  $BDScanStartDateTime = [datetime]::ParseExact("$BDScanStartDateTime", 'yyyy-MM-dd HH:mm:ss', $null)
+                  
+                  if ($ScanDateTime -ge $BDScanStartDateTime) {
+                    # Write-Host("$ScanDateTime vs $BDScanStartDateTime")
+                    Write-Host ("Scan completed time is greater than starting time")
+                    $ScanResult = "True"
+                  }
+                  else {
+                    write-output "Blackduck Scan StartDateTime is greater . Scan completed time is before the scan start time"
+                    $Count = $Count + 1;
+                    Start-Sleep -m 15000            
+                    Write-Host ("Retrying Count = $Count")
+                    $ScanResult = "False"
+                  }   
+                } until (($ScanResult -eq "True" ) -or ($Count -eq 3))                        
+                }
+                else {
+                  write-output "$projectcodelocationScanSummary status is $projectScanStatus"
+                  $Count = $Count + 1;
+                  Start-Sleep -m 40000          
+                  Write-Host ("Retrying Count = $Count")          
+                }      
+              }until (($projectScanStatus -eq "COMPLETED" ) -or ($Count -eq 3))  
+            }
+
+            }
+          }
+          }
+          else {Write-Host ("No scan project available to get result") }
+        }        
+
+        If($detectTools.ToUpper() -like "SIGNATURE_SCAN" )
+        {
+        #when there is no scan project and running signature scan first time it wont be able to 
+        #find the scan project since its being created newly and will return null . So added null condition
+        #But this will be a rare case . 
+        If ((($ScanResult -eq $null) -or ($ScanResult -eq "True")) -and ($BomResult -eq "True"))
+        {
+          #Check if bom and Scan is true and proceed.
+          Write-Host ("BlackDuck Scan results uploaded successfully.")
+        }
+        elseif(($bdThreshold -eq "OFF") -and (($ScanResult -eq "False") -or ($BomResult -eq "False")))
+        {
+          #check if bom or scan result is false and if threshold is OFF then continue. 
+          Write-Host ("Threshold set to OFF . BlackDuck Scan will continue.")
+        }
+        elseif(($bdThreshold -ne "OFF") -and (($ScanResult -eq "False") -or ($BomResult -eq "False")))
+        {
+          #check if threshold is not OFF . If not OFF and bom and scan results false then stop the pipeline. 
+          throw 'BlackDuck Scan results not uploaded, failing this pipeline...'; exit 1;
+        }
+        }
+        else
+        {
+         If (($BomResult -eq "True"))
+        {
+          #Check if bom  is true and proceed.
+          Write-Host ("BlackDuck Scan results uploaded successfully.")
+        }
+        elseif(($bdThreshold -eq "OFF") -and ($BomResult -eq "False"))
+        {
+          #check if bom or scan result is false and if threshold is OFF then continue. 
+          Write-Host ("Threshold set to OFF . BlackDuck Scan will continue.")
+        }
+        elseif(($bdThreshold -ne "OFF") -and ($BomResult -eq "False"))
+        {
+          #check if threshold is not OFF . If not OFF and bom results false then stop the pipeline. 
+          throw 'BlackDuck Scan results not uploaded, failing this pipeline...'; exit 1;
+        }
+        }       
+
+        # Write-Output "===========RiskUrl============="
+        $riskUrl= $projectIDInfo.items[0]._meta.href+"/risk-profile"
+        $riskProfile = Invoke-restmethod -Uri $riskUrl -Headers $authBearerHeaders
+
+        Write-Output " ========Vulnerability Scores======== "
+        $High =$riskProfile.categories.VULNERABILITY.High
+        $Medium= $riskProfile.categories.VULNERABILITY.Medium
+        $Low=$riskProfile.categories.VULNERABILITY.Low
+        $Unknown= $riskProfile.categories.VULNERABILITY.UNKNOWN
+        $Critical= $riskProfile.categories.VULNERABILITY.CRITICAL
+        $OK= $riskProfile.categories.VULNERABILITY.OK
+
+        Write-Host "Vulnerability High- $High"
+        Write-Host "Vulnerability Medium- $Medium"
+        Write-Host "Vulnerability Low- $Low"
+        Write-Host "Vulnerability Unknown- $Unknown"
+        Write-Host "Vulnerability Critical- $Critical"
+        Write-Host "Vulnerability OK- $OK"
+        Write-Host "blackduckThreshold- $bdThreshold";   
+
+        switch ($bdThreshold)
+                {
+                    OFF
+                    {    
+                      Write-Host "Enforcement disabled!"; 
+                      Break 
+                    }
+                    LENIENT 
+                    {
+                      Write-Host "LOW enforcement enabled!"; 
+                      if($High -gt 0){
+                        throw 'Code did not meet Black Duck scan standards, failing this pipeline...'; exit 1;
+                      }              
+                      Break
+                    }
+                    MODERATE 
+                    {
+                      Write-Host "MODERATE enforcement enabled!";     
+                      if($High -gt 0 -OR $Medium -gt 0)
+                      {
+                          throw 'Code did not meet Black Duck scan standards, failing this pipeline...'; exit 1;
+                      }
+                      Break
+                    }
+                    STRICT 
+                    {          
+                    Write-Host "STRICT enforcement enabled!";              
+                    if($High -gt 0 -OR $Medium -gt 0 -OR  $Low -gt 0)
+                    {              
+                      throw 'Code did not meet Black Duck scan standards, failing this pipeline...'; exit 1;
+                    }
+                      Break
+                    }
+                }
+        }
+        catch{Write-Warning $Error[0]}
+
+
+
+
+      ScriptArguments: '-bdThreshold ${{ parameters.blackduckThreshold}} -detectTools ${{parameters.SnDetectTools}}'
+

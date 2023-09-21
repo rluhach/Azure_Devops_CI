@@ -1,0 +1,88 @@
+parameters:
+- name: CxFolderExclusions
+  type: string 
+  default: cvs, .svn, .hg , .git, .bzr, bin , obj,  backup, .idea, node_modules
+
+- name: CxIncludeExcludePatterns
+  type: string 
+  default: '!**/*.DS_Store, !**/*.ipr, !**/*.iws, !**/*.bak, !**/*.tmp, !**/*.aac, !**/*.aif, !**/*.iff, !**/*.m3u, !**/*.mid, !**/*.mp3,!**/*.mpa, !**/*.ra, !**/*.wav, !**/*.wma, !**/*.3g2, !**/*.3gp, !**/*.asf, !**/*.asx, !**/*.avi,!**/*.flv, !**/*.mov, !**/*.mp4, !**/*.mpg,  !**/*.rm, !**/*.swf, !**/*.vob, !**/*.wmv, !**/*.bmp, !**/*.gif, !**/*.jpg, !**/*.png, !**/*.psd, !**/*.tif, !**/*.swf, !**/*.jar, !**/*.zip, !**/*.rar, !**/*.exe, !**/*.dll, !**/*.pdb, !**/*.7z, !**/*.gz, !**/*.tar.gz, !**/*.tar, !**/*.gz, !**/*.ahtm, !**/*.ahtml, !**/*.fhtml, !**/*.hdm, !**/*.hdml,   !**/*.hsql, !**/*.ht, !**/*.hta, !**/*.htc, !**/*.htd, !**/*.war, !**/*.ear, !**/*.htmls, !**/*.ihtml, !**/*.mht, !**/*.mhtm, !**/*.mhtml, !**/*.ssi, !**/*.stm, !**/*.stml, !**/*.ttml, !**/*.txn, !**/*.xhtm, !**/*.xhtml, !**/*.class, !**/*.iml'
+
+- name: CxOverrideToFullScan
+  type: boolean 
+  default: true
+
+- name: CxPreset
+  type: string 
+  default: TransUnion Application Security Policy
+
+# #CxRegion is used in Naming Convention and not in Checkmarx
+# # - name: CxRegion
+# #   type: string 
+# #   default: US
+
+- name: CxServiceConnection
+  type: string 
+  default: CheckMarx-9.2-cxado
+
+- name: CxSolutionPath
+  type: string 
+  default: $null
+  # default: "ADODemo.sln"
+
+- name: checkmarxThreshold
+  type: string 
+  default: OFF  
+
+- name: CxProjectPath
+  type: string 
+  default: $null
+# - name: CxIncludes
+#   type: string
+#   default: $(Build.SourcesDirectory)
+
+
+steps:
+
+  - template: Checkmarx_Scripts/Get_NugetPkgs_ForCxScan.yml
+    parameters:
+        CxProjectPath: ${{ parameters.CxProjectPath}}
+
+  - template: Checkmarx_Scripts/Set_Checkmarx_Threshold.yml
+    parameters:
+        checkmarxThreshold: ${{ parameters.checkmarxThreshold}}
+  
+  - template: Checkmarx_Scripts/Select_Checkmarx_Project_Folders.yml
+    parameters:
+        CxSolutionpath: ${{ parameters.CxSolutionPath}}
+
+  - template: Checkmarx_Scripts/Checkmarx_Variables.yml
+    parameters:
+        CxOverrideFullScan: ${{ parameters.CxOverrideToFullScan}}
+
+    # variables:
+    #   CxIncludes: ${Build.SourcesFolder}
+
+  - task: Application security testing@2022
+    displayName: 'Checkmarx scan'
+    inputs:
+      projectName: '$(svcProjectName)@@$(CxBranchName)'
+      enableProxy: false
+      enableSastScan: true
+      CheckmarxService: ${{ parameters.CxServiceConnection }}
+      preset: 'Checkmarx Default'   
+      customPreset: ${{ parameters.CxPreset}}
+      fullTeamName: '$(CxTeamName)'
+      incScan: '$(CxincScan)'
+      forceScan: '$(CxfullScan)'        
+      folderExclusion: ${{ parameters.CxFolderExclusions}}
+      fileExtension: '${{ parameters.CxIncludeExcludePatterns}}, $(CxSolutionPath), $(CxIncludes)'  
+      comment: '$(CxComment)' 
+      vulnerabilityThreshold: true
+      high: '$(CxHigh)'
+      medium: '$(CxMedium)'
+      low: '$(CxLow)'
+      enableDependencyScan: false
+
+
+
+

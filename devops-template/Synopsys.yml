@@ -1,0 +1,193 @@
+parameters:
+- name: Sntimeout 
+  type: number 
+  default: 3600
+  #1hr timeout set after many scans get timedout in 5 mins.
+  #aligning with Jenkins and updated timeout to 3600secs
+
+- name: SnLoggingLevelSynopsysIntegration
+  type: string 
+  default: INFO
+
+- name: SnVersionName
+  type: string 
+  default: LATEST
+
+- name: SnSignatureScannerPath
+  type: string 
+  default: $(Build.SourcesDirectory)
+
+- name: SnServiceConnection
+  type: string 
+  default: 'NULL'
+
+- name: blackduckThreshold
+  type: string
+  default: OFF
+
+- name: SnDetectTools
+  type: string 
+  default: DETECTOR
+  # default: DETECTOR,SIGNATURE_SCAN should not have signatur scan by default
+
+- name: SnDetectSourcePath
+  type: string 
+  default: $(Build.SourcesDirectory)
+
+- name: SnDetectSearchDepth
+  type: string 
+  default: 5
+
+- name: SnDetectPolicy
+  displayName: Blackduck Detect Policy
+  type: string
+  default: 'NONE'
+  values:
+    - 'ALL'
+    - 'NONE'
+    - 'UNSPECIFIED'
+    - 'TRIVIAL'
+    - 'MINOR'
+    - 'MAJOR'
+    - 'CRITICAL'
+    - 'BLOCKER'
+
+steps:         
+
+  - task: InlinePowershell@1      
+    displayName: Check Synopsys Version Name
+    inputs:
+      Script:
+        param($VersionName)
+        $BranchName = $env:BUILD_SOURCEBRANCH ;
+        Write-Host "Full Branch Name = $BranchName";  
+        If($BranchName -Like "refs/heads/*")
+        {
+        $BranchName = $BranchName -replace "refs/heads/","" ;}
+        elseif ($BranchName -Like "refs/*")
+        { $BranchName = $env:BUILD_SOURCEBRANCHNAME ;}
+        Write-Host "Branch Name = $BranchName";       
+        $ScanStartDateTime = (Get-Date -f "yyyy-MM-dd hh:mm:ss").ToString();
+        $BDScanStartDateTime = ([System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($ScanStartDateTime , [System.TimeZoneInfo]::Local.Id, 'UTC')).ToString("yyyy-MM-dd HH:mm:ss");
+        Write-Host "Scan starting Date time = $ScanStartDateTime"; 
+        Write-Host "UTC converted scan starting Date time = $BDScanStartDateTime"; 
+        $BDScanStartDate , $BDScanStartTime = $BDScanStartDateTime.Split(' ')[0,1];
+        switch -Wildcard ($BranchName.ToLower())
+        {
+            master
+            {    
+              $VersionName = 'PRODUCTION';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }
+            main
+            {    
+              $VersionName = 'PRODUCTION';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }
+            develop
+            {    
+              $VersionName = 'LATEST';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }
+            '*dev*'
+            {    
+              $VersionName = 'LATEST';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }            
+            '*feature*'
+            {
+              $VersionName = 'TEMP';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }
+            '*PR-*' 
+            {
+              $VersionName = 'TEMP';
+              Write-Host "VersionName = $VersionName";               
+              Break 
+            }
+            '*bugfix*' 
+            {
+              $VersionName = 'TEMP';
+              Write-Host "VersionName = $VersionName";               
+              Break
+            }
+            '*hotfix*' 
+            {
+              $VersionName = 'TEMP';
+              Write-Host "VersionName = $VersionName";               
+              Break
+            }
+            '*release*' 
+            {
+              $VersionName = 'STAGE';
+              Write-Host "VersionName = $VersionName";               
+              Break
+            }  
+        }
+        Write-Host "##vso[task.setvariable variable=SnVersionName;]$VersionName";
+        Write-Host "VersionName = $VersionName";    
+        Write-Host "##vso[task.setvariable variable=SnScanStartDateTime;]$BDScanStartDateTime";   
+      ScriptArguments: '-VersionName ${{ parameters.SnVersionName}}'
+
+  - task: InlinePowershell@1      
+    displayName: Add Blackduck Custom Fields
+    inputs:
+      Script:
+        $repoUrl = $env:BUILD_REPOSITORY_URI ;
+        $projName = $env:SYSTEM_TEAMPROJECT ;
+        $repoName = $env:BUILD_REPOSITORY_NAME ;
+        $gitCommit = $env:BUILD_SOURCEVERSION ;
+        $sourceBranchName = $env:BUILD_SOURCEBRANCH ;
+        $collectionUri = $env:SYSTEM_COLLECTIONURI ;
+        $collectionName = $collectionUri.Split("/")[3] ;
+
+        Write-Host "RepoUrl  $repoUrl";
+        Write-Host "ProjName  $projName";
+        Write-Host "RepoName  $repoName";
+        Write-Host "GitCommit  $gitCommit";
+        Write-Host "SourceBranchName  $sourceBranchName";
+        Write-Host "collectionName  $collectionName";
+
+        Write-Host "##vso[task.setvariable variable=RepoUrl;]$repoUrl";
+        Write-Host "##vso[task.setvariable variable=ProjName;]$projName";
+        Write-Host "##vso[task.setvariable variable=RepoName;]$repoName"; 
+        Write-Host "##vso[task.setvariable variable=GitCommit;]$gitCommit";   
+        Write-Host "##vso[task.setvariable variable=SourceBranchName;]$sourceBranchName"; 
+        Write-Host "##vso[task.setvariable variable=collectionName;]$collectionName"; 
+      
+  - task: SynopsysDetectTask@7
+    displayName: Synopsys(Black Duck)
+    inputs:
+      BlackDuckService: ${{ parameters.SnServiceConnection}}
+      DetectArguments: |
+        --detect.project.name=$(svcProjectName)
+        --detect.detector.search.depth=${{parameters.SnDetectSearchDepth}}
+        --logging.level.com.synopsys.integration=${{ parameters.SnLoggingLevelSynopsysIntegration}}
+        --detect.timeout=${{ parameters.Sntimeout}}
+        --detect.code.location.name=$(svcProjectName)-'$(SnVersionName)'
+        --detect.bdio.file.name=$(svcProjectName)-'$(SnVersionName)'
+        --detect.source.path=${{ parameters.SnDetectSourcePath}}
+        --detect.blackduck.signature.scanner.paths=${{ parameters.SnSignatureScannerPath}}
+        --detect.output.path=$(Agent.HomeDirectory)\blackduck
+        --detect.project.version.name='$(SnVersionName)'
+        --detect.tools=${{ parameters.SnDetectTools}}   
+        --detect.npm.dependency.types.excluded=DEV
+        --detect.policy.check.fail.on.severities=${{parameters.SnDetectPolicy}}
+        --detect.custom.fields.project[0].label=scmUrl
+        --detect.custom.fields.project[0].value='$(repoUrl)'
+        --detect.custom.fields.project[1].label=scmCollection 
+        --detect.custom.fields.project[1].value='$(collectionName)'
+        --detect.custom.fields.project[2].label=scmProject
+        --detect.custom.fields.project[2].value='$(projName)'
+        --detect.custom.fields.project[3].label=scmRepo
+        --detect.custom.fields.project[3].value='$(repoName)'
+        --detect.custom.fields.version[0].label=scmCommit
+        --detect.custom.fields.version[0].value='$(gitCommit)'
+        --detect.custom.fields.version[1].label=scmBranch
+        --detect.custom.fields.version[1].value='$(SourceBranchName)'
+      DetectVersion: 'latest'
